@@ -166,9 +166,23 @@ type LLMRouter struct {
 	GeminiAPIKey  string
 	GeminiBaseURL string
 	GeminiModel   string
+
+	// Claude Code configuration
+	ClaudeCodeOAuthToken   string
+	ClaudeCodeModel        string
+	ClaudeCodeWorkdir      string
+	ClaudeCodeAllowedTools string
+}
+
+func (r *LLMRouter) isClaudeCodeModel(model string) bool {
+	return strings.HasPrefix(model, "claude-code") || model == "claude-code"
 }
 
 func (r *LLMRouter) isAnthropicModel(model string) bool {
+	// Exclude claude-code models from Anthropic routing
+	if r.isClaudeCodeModel(model) {
+		return false
+	}
 	return strings.HasPrefix(model, "claude-") || strings.HasPrefix(model, "anthropic/")
 }
 
@@ -205,6 +219,33 @@ func (r *LLMRouter) getReplay(model string) (messages []*ModelMessage, _ error) 
 		return nil, err
 	}
 	return messages, nil
+}
+
+func (r *LLMRouter) routeClaudeCodeModel() *LLMEndpoint {
+	// Parse allowed tools from comma-separated string
+	var allowedTools []string
+	if r.ClaudeCodeAllowedTools != "" {
+		allowedTools = strings.Split(r.ClaudeCodeAllowedTools, ",")
+		// Trim spaces from each tool name
+		for i := range allowedTools {
+			allowedTools[i] = strings.TrimSpace(allowedTools[i])
+		}
+	}
+
+	endpoint := &LLMEndpoint{
+		Key:      r.ClaudeCodeOAuthToken, // OAuth token stored in Key field
+		Provider: "claude-code",
+	}
+
+	// Default workdir if not specified
+	workdir := r.ClaudeCodeWorkdir
+	if workdir == "" {
+		workdir = "/work"
+	}
+
+	endpoint.Client = newClaudeCodeClient(endpoint, workdir, allowedTools)
+
+	return endpoint
 }
 
 func (r *LLMRouter) routeAnthropicModel() *LLMEndpoint {
@@ -299,6 +340,8 @@ func (r *LLMRouter) Route(model string) (*LLMEndpoint, error) {
 	var endpoint *LLMEndpoint
 	var err error
 	switch {
+	case r.isClaudeCodeModel(model):
+		endpoint = r.routeClaudeCodeModel()
 	case r.isAnthropicModel(model):
 		endpoint = r.routeAnthropicModel()
 	case r.isOpenAIModel(model):
@@ -372,6 +415,20 @@ func (r *LLMRouter) LoadConfig(ctx context.Context, getenv func(context.Context,
 	})
 	eg.Go(func() error {
 		return save("GEMINI_MODEL", &r.GeminiModel)
+	})
+
+	// Claude Code configuration
+	eg.Go(func() error {
+		return save("CLAUDE_CODE_OAUTH_TOKEN", &r.ClaudeCodeOAuthToken)
+	})
+	eg.Go(func() error {
+		return save("CLAUDE_CODE_MODEL", &r.ClaudeCodeModel)
+	})
+	eg.Go(func() error {
+		return save("CLAUDE_CODE_WORKDIR", &r.ClaudeCodeWorkdir)
+	})
+	eg.Go(func() error {
+		return save("CLAUDE_CODE_ALLOWED_TOOLS", &r.ClaudeCodeAllowedTools)
 	})
 
 	var (

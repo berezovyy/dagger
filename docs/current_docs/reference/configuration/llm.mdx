@@ -21,6 +21,54 @@ OPENAI_API_KEY="op://Private/OpenAI API Key/password"
 ```
 :::
 
+## Claude Code Max (Subscription-based)
+
+:::info EXPERIMENTAL
+Claude Code Max integration is experimental. The CLI execution engine is a placeholder and requires additional setup to work properly.
+:::
+
+Use your Claude Code Max subscription instead of API keys to avoid per-token costs.
+
+**Prerequisites:**
+- Active Claude Code Max subscription
+- Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code`)
+- OAuth token from your Claude Code session
+
+**Setup:**
+
+1. Export your OAuth token to a Dagger secret:
+   ```shell
+   cat ~/.claude/oauth_token.json | dagger secret set CLAUDE_OAUTH_TOKEN -
+   ```
+
+2. Configure environment variables:
+   ```shell
+   CLAUDE_CODE_OAUTH_TOKEN="env:CLAUDE_OAUTH_TOKEN"  # Required
+   CLAUDE_CODE_MODEL="sonnet"                        # Optional: "sonnet" or "opus"
+   CLAUDE_CODE_WORKDIR="/work"                       # Optional: working directory
+   CLAUDE_CODE_ALLOWED_TOOLS="Bash,Read,Edit"       # Optional: comma-separated tool list
+   ```
+
+3. Use the `claude-code` model prefix in your Dagger workflows:
+   ```go
+   llm := dag.LLM().WithModel("claude-code")
+   ```
+
+**Model Options:**
+- `claude-code` or `claude-code-sonnet` - Uses Claude Sonnet with Max subscription
+- `claude-code-opus` - Uses Claude Opus with Max subscription
+
+**Benefits:**
+- ✅ Zero per-token API costs (uses Max subscription)
+- ✅ Higher rate limits than API access
+- ✅ Access to Claude Code's built-in tools
+
+**Current Limitations:**
+- CLI execution engine is not yet fully implemented
+- Requires external Claude Code CLI setup
+- Session management is basic
+- No streaming support yet
+
 ## Anthropic
 
 - `ANTHROPIC_API_KEY`: required
