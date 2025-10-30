@@ -6,6 +6,9 @@ export * from "./telemetry/index.js"
 // Default client bindings
 export * from "./api/client.gen.js"
 
+// Load gRPC methods (side effect: extends Container.prototype)
+import "./api/container_grpc.js"
+
 // Common errors
 export * from "./common/errors/index.js"
 

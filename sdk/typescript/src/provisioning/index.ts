@@ -1,6 +1,7 @@
 import { GraphQLClient } from "graphql-request"
 
 import { ConnectOpts } from "../connectOpts.js"
+import { globalConnection } from "../common/graphql/connection.js"
 import { Bin } from "./bin.js"
 import { CLI_VERSION } from "./default.js"
 

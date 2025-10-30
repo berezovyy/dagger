@@ -19,6 +19,7 @@ import {
   InitEngineSessionBinaryError,
 } from "../common/errors/index.js"
 import { createGQLClient } from "../common/graphql/client.js"
+import { globalConnection } from "../common/graphql/connection.js"
 import { ConnectOpts, EngineConn, ConnectParams } from "./engineconn.js"
 
 let OVERRIDE_CLI_URL: string = ""
@@ -243,6 +244,13 @@ export class Bin implements EngineConn {
     if (opts.LogOutput) {
       opts.LogOutput.write("OK!\n")
     }
+
+    // Set session info for gRPC connection
+    globalConnection.setSessionInfo(
+      "127.0.0.1",
+      connectParams.port,
+      connectParams.session_token,
+    )
 
     return createGQLClient(connectParams.port, connectParams.session_token)
   }
