@@ -18,6 +18,7 @@
   "main": "dist/src/index.js",
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",
+    "@grpc/proto-loader": "^0.7.10",
     "@lifeomic/axios-fetch": "^3.1.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/core": "^2.2.0",
