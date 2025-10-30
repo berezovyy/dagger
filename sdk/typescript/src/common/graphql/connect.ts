@@ -2,10 +2,20 @@ import { GraphQLClient } from "graphql-request"
 
 import { ConnectOpts } from "../../connectOpts.js"
 import { createGQLClient } from "./client.js"
+import { globalConnection } from "./connection.js"
+
+/**
+ * Session information returned from the engine
+ */
+export interface SessionInfo {
+  host: string
+  port: number
+  token: string
+}
 
 /**
  * Execute the callback with a GraphQL client connected to the Dagger engine.
- * It automatically provisions the engine if needed.
+ * It automatically provisions the engine if needed and sets up the gRPC connection.
  */
 export async function withGQLClient<T>(
   connectOpts: ConnectOpts,
@@ -20,8 +30,12 @@ export async function withGQLClient<T>(
     }
 
     const token = process.env["DAGGER_SESSION_TOKEN"]
+    const portNum = Number(port)
 
-    return await cb(createGQLClient(Number(port), token))
+    // Set session info for gRPC connection
+    globalConnection.setSessionInfo("127.0.0.1", portNum, token)
+
+    return await cb(createGQLClient(portNum, token))
   }
 
   try {
