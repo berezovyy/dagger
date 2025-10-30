@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package dagger.exec;
+
+option go_package = "exec";
+
+service Exec {
+  rpc Session(stream SessionRequest) returns (stream SessionResponse);
+  rpc ContainerLifecycle(ContainerLifecycleRequest) returns (stream ContainerLifecycleEvent);
+
+  // ContainerStatus queries the current status of a container non-blocking.
+  // Returns cached state from the registry without waiting for container completion.
+  rpc ContainerStatus(ContainerStatusRequest) returns (ContainerStatusResponse);
+
+  // Container control operations
+  rpc ContainerPause(ContainerControlRequest) returns (ContainerControlResponse);
+  rpc ContainerResume(ContainerControlRequest) returns (ContainerControlResponse);
+  rpc ContainerSignal(ContainerSignalRequest) returns (ContainerControlResponse);
+}
+
+message SessionRequest {
+	oneof msg {
+		Start start = 1;
+		bytes stdin = 2;
+		Resize resize = 3;
+	}
+}
+
+message SessionResponse {
+	oneof msg {
+		bytes stdout = 1;
+		bytes stderr = 2;
+		int32 exit = 3;
+		Ready ready = 4;
+	}
+}
+
+message Start {
+	string container_id = 1;
+	repeated string command = 2;
+	map<string, string> env = 3;
+	string working_dir = 4;
+	bool tty = 5;
+}
+
+message Resize {
+	int32 Width = 1;
+	int32 Height = 2;
+}
+
+message Ready {}
+
+message ContainerLifecycleRequest {
+	// Optional: filter by specific container ID
+	// Empty = subscribe to all containers
+	string container_id = 1;
+}
+
+message ContainerLifecycleEvent {
+	string container_id = 1;
+	string event_type = 2;  // registered, started, paused, resumed, exited, unregistered
+	string status = 3;  // Current status after event
+	int64 timestamp = 4;  // Unix timestamp
+	int32 exit_code = 5;  // For "exited" events (0 if not applicable)
+	string message = 6;  // Human-readable description
+}
+
+message ContainerStatusRequest {
+	string container_id = 1;
+	bool include_resource_usage = 2;  // Optional, for resource stats
+}
+
+message ContainerStatusResponse {
+	string container_id = 1;
+	string status = 2;  // created, running, paused, stopped, exited, unknown
+	optional int32 exit_code = 3;  // null if not exited
+	int64 started_at = 4;  // Unix timestamp
+	optional int64 finished_at = 5;  // Unix timestamp, null if not finished
+	optional ResourceUsage resource_usage = 6;
+}
+
+message ResourceUsage {
+	double cpu_percent = 1;
+	uint64 memory_bytes = 2;
+	uint64 memory_limit = 3;
+	uint64 io_read_bytes = 4;
+	uint64 io_write_bytes = 5;
+}
+
+message ContainerControlRequest {
+  string container_id = 1;
+}
+
+message ContainerSignalRequest {
+  string container_id = 1;
+  string signal = 2;  // SIGTERM, SIGKILL, SIGINT, SIGHUP, etc.
+}
+
+message ContainerControlResponse {
+  bool success = 1;
+  string message = 2;  // Error message or success confirmation
+}
