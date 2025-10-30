@@ -23,51 +23,58 @@ OPENAI_API_KEY="op://Private/OpenAI API Key/password"
 
 ## Claude Code Max (Subscription-based)
 
-:::info EXPERIMENTAL
-Claude Code Max integration is experimental. The CLI execution engine is a placeholder and requires additional setup to work properly.
-:::
+Use your Claude Code Max subscription instead of API keys for zero per-token costs and higher rate limits.
 
-Use your Claude Code Max subscription instead of API keys to avoid per-token costs.
+1. Install Claude Code CLI:
 
-**Prerequisites:**
-- Active Claude Code Max subscription
-- Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code`)
-- OAuth token from your Claude Code session
-
-**Setup:**
-
-1. Export your OAuth token to a Dagger secret:
    ```shell
-   cat ~/.claude/oauth_token.json | dagger secret set CLAUDE_OAUTH_TOKEN -
+   npm install -g @anthropic-ai/claude-code
    ```
 
-2. Configure environment variables:
+2. Authenticate (one-time):
+
    ```shell
-   CLAUDE_CODE_OAUTH_TOKEN="env:CLAUDE_OAUTH_TOKEN"  # Required
-   CLAUDE_CODE_MODEL="sonnet"                        # Optional: "sonnet" or "opus"
-   CLAUDE_CODE_WORKDIR="/work"                       # Optional: working directory
-   CLAUDE_CODE_ALLOWED_TOOLS="Bash,Read,Edit"       # Optional: comma-separated tool list
+   claude
    ```
 
-3. Use the `claude-code` model prefix in your Dagger workflows:
+   The CLI will open a browser for authentication and store credentials in `~/.claude/.credentials.json`.
+
+3. Use in any Dagger module:
+
    ```go
-   llm := dag.LLM().WithModel("claude-code")
+   response, err := dag.LLM().
+       WithModel("claude-code").
+       WithPrompt("Your question here").
+       LastReply(ctx)
    ```
 
 **Model Options:**
-- `claude-code` or `claude-code-sonnet` - Uses Claude Sonnet with Max subscription
-- `claude-code-opus` - Uses Claude Opus with Max subscription
+- `claude-code` or `claude-code-sonnet` - Claude Sonnet 4.5 (default, best balance)
+- `claude-code-opus` - Claude Opus 4.1 (most capable)
+- `claude-code-haiku` - Claude Haiku 4.5 (fastest)
 
-**Benefits:**
-- ✅ Zero per-token API costs (uses Max subscription)
-- ✅ Higher rate limits than API access
-- ✅ Access to Claude Code's built-in tools
+**How it works:**
 
-**Current Limitations:**
-- CLI execution engine is not yet fully implemented
-- Requires external Claude Code CLI setup
-- Session management is basic
-- No streaming support yet
+When building Dagger from source, the engine includes Node.js, npm, and the Claude CLI. Your host credentials (`~/.claude/.credentials.json`) are automatically mounted read-only into the engine container, enabling seamless authentication.
+
+**Example:**
+
+```go
+// Code review with system prompt
+review, err := dag.LLM().
+    WithModel("claude-code").
+    WithSystemPrompt("You are a senior code reviewer").
+    WithPrompt("Review this pull request...").
+    LastReply(ctx)
+```
+
+:::note
+Tool calling is disabled in this mode for simple text completion. Requires Dagger engine built from source.
+:::
+
+:::tip Troubleshooting
+If you get "claude CLI not found", ensure you're using a locally built Dagger engine (`./hack/build`). If authentication fails, re-run `claude` to re-authenticate.
+:::
 
 ## Anthropic
 

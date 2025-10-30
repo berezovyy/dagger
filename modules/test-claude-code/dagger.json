@@ -1,0 +1,7 @@
+{
+  "name": "test-claude-code",
+  "engineVersion": "v0.19.4-010101000000-dev-19cdf8945132",
+  "sdk": {
+    "source": "go"
+  }
+}

@@ -51,6 +51,7 @@ func TestLlmConfig(t *testing.T) {
 		"env://GEMINI_API_KEY":           "gemini-api-key",
 		"env://GEMINI_BASE_URL":          "gemini-base-url",
 		"env://GEMINI_MODEL":             "gemini-model",
+		"env://CLAUDE_CODE_MODEL":        "sonnet",
 	}
 
 	dagql.Fields[LLMTestQuery]{
@@ -84,6 +85,7 @@ func TestLlmConfig(t *testing.T) {
 	assert.Equal(t, "gemini-api-key", r.GeminiAPIKey)
 	assert.Equal(t, "gemini-base-url", r.GeminiBaseURL)
 	assert.Equal(t, "gemini-model", r.GeminiModel)
+	assert.Equal(t, "sonnet", r.ClaudeCodeModel)
 }
 
 func TestLlmConfigDisableStreaming(t *testing.T) {

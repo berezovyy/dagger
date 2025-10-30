@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"dagger.io/dagger/telemetry"
@@ -15,32 +17,40 @@ import (
 
 // ClaudeCodeClient implements LLMClient using Claude Code CLI with Max subscription
 type ClaudeCodeClient struct {
-	endpoint     *LLMEndpoint
-	workdir      string
-	allowedTools []string
-	sessionID    string // Track session ID for multi-turn conversations
+	endpoint  *LLMEndpoint
+	sessionID string // Track session ID for multi-turn conversations
 }
 
 // Ensure ClaudeCodeClient implements LLMClient interface
 var _ LLMClient = (*ClaudeCodeClient)(nil)
 
+// NO_TOOLS_PROMPT is a system prompt that instructs Claude to not use any tools
+const NO_TOOLS_PROMPT = `You must respond using only plain text without invoking any tools, functions, or external capabilities. Do not use web search, file reading, file writing, code execution, or any other tools even if they are available to you. Do not create artifacts, documents, or any special formatted content blocks. Simply provide your answer directly as regular conversational text. If asked to perform actions that would require tools (like searching the web, analyzing files, or running code), explain what you would do conceptually rather than actually executing these actions. Your entire response should be standard text without any function calls or special formatting. NO USAGE OF SUBAGENTS.`
+
 // newClaudeCodeClient creates a new Claude Code client
-func newClaudeCodeClient(endpoint *LLMEndpoint, workdir string, allowedTools []string) *ClaudeCodeClient {
+func newClaudeCodeClient(endpoint *LLMEndpoint) *ClaudeCodeClient {
 	return &ClaudeCodeClient{
-		endpoint:     endpoint,
-		workdir:      workdir,
-		allowedTools: allowedTools,
+		endpoint: endpoint,
 	}
 }
 
 // Claude Code CLI JSON response structure
 type claudeCodeResponse struct {
 	Type         string  `json:"type"`
+	Subtype      string  `json:"subtype"`
+	IsError      bool    `json:"is_error"`
 	Result       string  `json:"result"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
 	DurationMS   int64   `json:"duration_ms"`
 	SessionID    string  `json:"session_id"`
 	Model        string  `json:"model"`
+	NumTurns     int     `json:"num_turns"`
+	Usage        struct {
+		InputTokens              int64 `json:"input_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		OutputTokens             int64 `json:"output_tokens"`
+	} `json:"usage"`
 }
 
 // IsRetryable checks if an error from Claude Code CLI is retryable
@@ -57,6 +67,9 @@ func (c *ClaudeCodeClient) IsRetryable(err error) bool {
 		"Internal server error",
 		"503",
 		"429",
+		"connection refused",  // CLI can't connect to API
+		"deadline exceeded",   // Context timeout
+		"temporary failure",   // Temporary network issues
 	}
 
 	for _, retryable := range retryableErrors {
@@ -100,7 +113,17 @@ func (c *ClaudeCodeClient) SendQuery(ctx context.Context, history []*ModelMessag
 	// Parse the JSON response
 	var resp claudeCodeResponse
 	if err := json.Unmarshal([]byte(output), &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse Claude Code response: %w", err)
+		return nil, fmt.Errorf("failed to parse Claude Code response: %w\nOutput: %s", err, output)
+	}
+
+	// Check for error responses
+	if resp.IsError {
+		return nil, fmt.Errorf("claude CLI returned error: %s", resp.Result)
+	}
+
+	// Check for empty result
+	if resp.Result == "" {
+		return nil, fmt.Errorf("claude CLI returned empty result")
 	}
 
 	// Store session ID for future calls
@@ -111,8 +134,7 @@ func (c *ClaudeCodeClient) SendQuery(ctx context.Context, history []*ModelMessag
 	// Write response to telemetry
 	fmt.Fprint(markdownW, resp.Result)
 
-	// Record metrics (Claude Code returns cost instead of tokens)
-	// We'll track duration as a metric
+	// Record metrics
 	durationGauge, err := m.Int64Gauge("llm.duration_ms")
 	if err == nil {
 		durationGauge.Record(ctx, resp.DurationMS, metric.WithAttributes(attrs...))
@@ -125,16 +147,16 @@ func (c *ClaudeCodeClient) SendQuery(ctx context.Context, history []*ModelMessag
 		costGauge.Record(ctx, resp.TotalCostUSD, metric.WithAttributes(attrs...))
 	}
 
-	// Return the response
+	// Return the response with token usage from CLI output
 	return &LLMResponse{
 		Content:   resp.Result,
-		ToolCalls: []LLMToolCall{}, // TODO: Parse tool calls from response
+		ToolCalls: []LLMToolCall{}, // No tool calls in no-tools mode
 		TokenUsage: LLMTokenUsage{
-			// Claude Code doesn't return token counts, only cost
-			// We'll leave these as 0 for now
-			InputTokens:  0,
-			OutputTokens: 0,
-			TotalTokens:  0,
+			InputTokens:       resp.Usage.InputTokens,
+			OutputTokens:      resp.Usage.OutputTokens,
+			CachedTokenReads:  resp.Usage.CacheReadInputTokens,
+			CachedTokenWrites: resp.Usage.CacheCreationInputTokens,
+			TotalTokens:       resp.Usage.InputTokens + resp.Usage.OutputTokens,
 		},
 	}, nil
 }
@@ -179,17 +201,48 @@ func (c *ClaudeCodeClient) buildPrompt(history []*ModelMessage) (string, error) 
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// executeCLI executes the Claude Code CLI command and returns the output
-// NOTE: This implementation assumes Claude Code CLI is installed and available in the PATH
-// For now, this is a placeholder that returns an error indicating the feature needs external setup
-func (c *ClaudeCodeClient) executeCLI(ctx context.Context, prompt string) (string, error) {
-	// TODO: Implement actual CLI execution
-	// This requires one of the following approaches:
-	// 1. Expect claude CLI to be installed on the host and use exec.CommandContext
-	// 2. Use Dagger's Container API (requires refactoring to access from service context)
-	// 3. Connect to an external Claude Code service/daemon
+// resolveModel resolves the model name to use with Claude Code CLI
+func (c *ClaudeCodeClient) resolveModel() string {
+	// If endpoint has a specific model, use it
+	if c.endpoint.Model != "" && c.endpoint.Model != "claude-code" {
+		// Extract model from "claude-code-sonnet" -> "sonnet"
+		model := strings.TrimPrefix(c.endpoint.Model, "claude-code-")
+		if model != c.endpoint.Model {
+			return model
+		}
+	}
 
-	return "", fmt.Errorf("Claude Code CLI integration is not yet fully implemented. " +
-		"This feature requires Claude Code CLI to be installed and configured with OAuth token. " +
-		"Please use model='claude-sonnet-*' with ANTHROPIC_API_KEY for now")
+	// Default to sonnet for best balance
+	return "sonnet"
+}
+
+// executeCLI executes the Claude Code CLI command and returns the output
+func (c *ClaudeCodeClient) executeCLI(ctx context.Context, prompt string) (string, error) {
+	// Resolve model name (sonnet, opus, haiku, or full name)
+	model := c.resolveModel()
+
+	// Build command arguments
+	args := []string{
+		"-p",                          // Print mode (non-interactive)
+		"--model", model,              // Model selection
+		"--append-system-prompt", NO_TOOLS_PROMPT, // Disable tools
+		"--max-turns", "1",            // Single turn only
+		"--output-format", "json",     // JSON output
+		prompt,                        // User prompt
+	}
+
+	// Execute command
+	cmd := exec.CommandContext(ctx, "claude", args...)
+
+	// Capture output
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Check if claude CLI is not found
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf("claude CLI not found in PATH. Please install: npm install -g @anthropic-ai/claude-code")
+		}
+		return "", fmt.Errorf("claude CLI execution failed: %w\nOutput: %s", err, output)
+	}
+
+	return string(output), nil
 }

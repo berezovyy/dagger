@@ -300,6 +300,17 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		slog.Warn("could not stat certificates", "path", engineCertificatesPath, "error", err)
 	}
 
+	// mount Claude Code CLI credentials if available
+	homeDir, err := os.UserHomeDir()
+	if err == nil {
+		claudeCredsPath := filepath.Join(homeDir, ".claude", ".credentials.json")
+		if _, err := os.Stat(claudeCredsPath); err == nil {
+			runOptions.volumes = append(runOptions.volumes, claudeCredsPath+":/root/.claude/.credentials.json:ro")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("could not stat claude credentials", "path", claudeCredsPath, "error", err)
+		}
+	}
+
 	if dopts.DaggerCloudToken != "" {
 		runOptions.env = append(runOptions.env, fmt.Sprintf("%s=%s", EnvDaggerCloudToken, dopts.DaggerCloudToken))
 	}

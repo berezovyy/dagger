@@ -150,6 +150,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 					"ripgrep",
 					// for dbs
 					"sqlite",
+					// for Claude Code CLI
+					"nodejs", "npm",
 				},
 				Arch: build.platformSpec.Architecture,
 			}).
@@ -162,7 +164,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 				"ln -s /usr/sbin/ip6tables-legacy /usr/local/sbin/ip6tables",
 				"ln -s /usr/sbin/ip6tables-legacy-save /usr/local/sbin/ip6tables-save",
 				"ln -s /usr/sbin/ip6tables-legacy-restore /usr/local/sbin/ip6tables-restore",
-			}, " && ")})
+			}, " && ")}).
+			WithExec([]string{"npm", "install", "-g", "@anthropic-ai/claude-code"})
 	case "ubuntu":
 		base = dag.Container(dagger.ContainerOpts{Platform: build.platform}).
 			From("ubuntu:"+consts.UbuntuVersion).
@@ -178,6 +181,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 				"ripgrep",
 				// for dbs
 				"sqlite",
+				// for Claude Code CLI
+				"nodejs", "npm",
 			}).
 			WithExec([]string{
 				"update-alternatives",
@@ -187,7 +192,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 				"update-alternatives",
 				"--set", "ip6tables", "/usr/sbin/ip6tables-legacy",
 			}).
-			WithoutEnvVariable("DAGGER_APT_CACHE_BUSTER")
+			WithoutEnvVariable("DAGGER_APT_CACHE_BUSTER").
+			WithExec([]string{"npm", "install", "-g", "@anthropic-ai/claude-code"})
 		if build.gpuSupport {
 			base = base.
 				WithExec([]string{"sh", "-c", `curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`}).
@@ -206,6 +212,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 			"ripgrep",
 			// for dbs
 			"sqlite",
+			// for Claude Code CLI
+			"nodejs", "npm",
 		}
 		if build.gpuSupport {
 			pkgs = append(pkgs, "nvidia-driver", "nvidia-tools")
@@ -215,7 +223,8 @@ func (build *Builder) Engine(ctx context.Context) (*dagger.Container, error) {
 			Container(dagger.WolfiContainerOpts{
 				Packages: pkgs,
 				Arch:     build.platformSpec.Architecture,
-			})
+			}).
+			WithExec([]string{"npm", "install", "-g", "@anthropic-ai/claude-code"})
 	default:
 		return nil, fmt.Errorf("unsupported engine base %q", build.base)
 	}
