@@ -28,6 +28,7 @@ import (
 	"github.com/dagger/dagger/engine/slog"
 	"github.com/dagger/dagger/internal/buildkit/executor"
 	"github.com/dagger/dagger/internal/buildkit/executor/oci"
+	gatewayapi "github.com/dagger/dagger/internal/buildkit/frontend/gateway/pb"
 	randid "github.com/dagger/dagger/internal/buildkit/identity"
 	"github.com/dagger/dagger/internal/buildkit/solver/pb"
 	"github.com/dagger/dagger/internal/buildkit/util/bklog"
@@ -48,6 +49,7 @@ import (
 	"github.com/dagger/dagger/engine/buildkit/cacerts"
 	"github.com/dagger/dagger/engine/buildkit/containerfs"
 	"github.com/dagger/dagger/engine/distconsts"
+	"github.com/dagger/dagger/engine/session/exec"
 	"github.com/dagger/dagger/network"
 )
 
@@ -106,6 +108,11 @@ type execState struct {
 	exitCodePath     string
 	metaMount        *specs.Mount
 	origEnvMap       map[string]string
+
+	// execAttachable provides gRPC streaming for real-time log output.
+	// When set, logs are streamed to connected clients in addition to being written to files.
+	// This is nil when session manager is not available or when streaming is not needed.
+	execAttachable *exec.ExecAttachable
 
 	startedOnce *sync.Once
 	startedCh   chan<- struct{}
@@ -549,7 +556,74 @@ func (w *Worker) setExitCodePath(_ context.Context, state *execState) error {
 	return nil
 }
 
-func (w *Worker) setupStdio(_ context.Context, state *execState) error {
+// setupExecStreaming creates an ExecAttachable for real-time log streaming.
+// This must be called before setupStdio so that stream writers are available.
+//
+// The ExecAttachable provides io.Writers that can stream stdout/stderr to gRPC clients.
+// These writers are used by setupStdio via TeeWriter to enable dual output (file + stream).
+//
+// This is a best-effort operation - if setup fails, execution continues without streaming
+// (degrading gracefully to file-only output).
+//
+// Note: Currently the ExecAttachable is created but not registered with the session manager.
+// Full client discovery/connection will be implemented in a future iteration.
+func (w *Worker) setupExecStreaming(ctx context.Context, state *execState) error {
+	// Only set up streaming if we have execution metadata
+	// In the future, this may check for session manager availability
+	if w.execMD == nil {
+		bklog.G(ctx).Debug("exec streaming: no execution metadata, skipping")
+		return nil
+	}
+
+	// Create the ExecAttachable for this execution
+	// This provides stream writers that can be used by setupStdio
+	execAttachable := exec.NewExecAttachable(ctx)
+	state.execAttachable = execAttachable
+
+	// Add cleanup to close the ExecAttachable when done
+	// This ensures all buffered data is flushed and resources are released
+	state.cleanups.Add("close exec attachable", func() error {
+		if state.execAttachable != nil {
+			return state.execAttachable.Close()
+		}
+		return nil
+	})
+
+	bklog.G(ctx).Debug("exec streaming: ExecAttachable created successfully")
+	return nil
+}
+
+// getStreamWriter returns an optional stream writer for real-time log streaming.
+// It looks up the ExecAttachable from the execState and returns the appropriate writer
+// (stdout or stderr) for streaming logs to connected gRPC clients.
+//
+// When ExecAttachable is not available (nil), this returns nil, causing TeeWriter to only
+// write to files (preserving existing behavior).
+func (w *Worker) getStreamWriter(state *execState, streamType string) io.Writer {
+	// If no ExecAttachable is set, return nil (no streaming, file-only mode)
+	if state.execAttachable == nil {
+		return nil
+	}
+
+	// Return the appropriate stream writer based on stream type
+	switch streamType {
+	case "stdout":
+		return state.execAttachable.NewStdoutWriter()
+	case "stderr":
+		return state.execAttachable.NewStderrWriter()
+	default:
+		// Unknown stream type, return nil
+		return nil
+	}
+}
+
+// setupStdio configures stdout/stderr for container execution with dual output:
+// 1. File output: Writes to stdout/stderr/combined files (for Container.Stdout(), Container.Stderr() APIs)
+// 2. Stream output: Optionally writes to gRPC streams for real-time log consumption
+//
+// This function uses TeeWriter to achieve dual output without blocking file writes on stream operations.
+// When stream writers are not available (nil), behavior is identical to file-only writes.
+func (w *Worker) setupStdio(ctx context.Context, state *execState) error {
 	if state.procInfo.Meta.Tty {
 		state.spec.Process.Terminal = true
 		// no more stdio setup needed
@@ -566,6 +640,7 @@ func (w *Worker) setupStdio(_ context.Context, state *execState) error {
 	}
 	state.cleanups.Add("close container combined output file", combinedOutputFile.Close)
 
+	// Setup stdout with TeeWriter for dual output (file + optional stream)
 	var stdoutWriters []io.Writer
 	if state.procInfo.Stdout != nil {
 		stdoutWriters = append(stdoutWriters, state.procInfo.Stdout)
@@ -576,9 +651,18 @@ func (w *Worker) setupStdio(_ context.Context, state *execState) error {
 		return fmt.Errorf("open stdout file: %w", err)
 	}
 	state.cleanups.Add("close container stdout file", stdoutFile.Close)
-	stdoutWriters = append(stdoutWriters, stdoutFile)
+
+	// Wrap stdout file with TeeWriter to enable dual output:
+	// 1. Primary: write to file (for Container.Stdout() API)
+	// 2. Secondary: write to stream (for real-time log streaming, if available)
+	// When stream writer is nil, TeeWriter behaves identically to writing directly to file
+	stdoutTee := NewTeeWriter(ctx, stdoutFile, w.getStreamWriter(state, "stdout"))
+	state.cleanups.Add("close stdout TeeWriter", stdoutTee.Close)
+
+	stdoutWriters = append(stdoutWriters, stdoutTee)
 	stdoutWriters = append(stdoutWriters, combinedOutputFile)
 
+	// Setup stderr with TeeWriter for dual output (file + optional stream)
 	var stderrWriters []io.Writer
 	if state.procInfo.Stderr != nil {
 		stderrWriters = append(stderrWriters, state.procInfo.Stderr)
@@ -589,7 +673,15 @@ func (w *Worker) setupStdio(_ context.Context, state *execState) error {
 		return fmt.Errorf("open stderr file: %w", err)
 	}
 	state.cleanups.Add("close container stderr file", stderrFile.Close)
-	stderrWriters = append(stderrWriters, stderrFile)
+
+	// Wrap stderr file with TeeWriter to enable dual output:
+	// 1. Primary: write to file (for Container.Stderr() API)
+	// 2. Secondary: write to stream (for real-time log streaming, if available)
+	// When stream writer is nil, TeeWriter behaves identically to writing directly to file
+	stderrTee := NewTeeWriter(ctx, stderrFile, w.getStreamWriter(state, "stderr"))
+	state.cleanups.Add("close stderr TeeWriter", stderrTee.Close)
+
+	stderrWriters = append(stderrWriters, stderrTee)
 	stderrWriters = append(stderrWriters, combinedOutputFile)
 
 	if w.execMD != nil && (w.execMD.RedirectStdinPath != "" || w.execMD.RedirectStdoutPath != "" || w.execMD.RedirectStderrPath != "") {
@@ -1205,5 +1297,29 @@ func (w *Worker) runContainer(ctx context.Context, state *execState) (rerr error
 		return err
 	}
 
-	return exitError(ctx, state.exitCodePath, w.callWithIO(ctx, state.procInfo, startedCallback, killer, runcCall), state.procInfo.Meta.ValidExitCodes)
+	callErr := w.callWithIO(ctx, state.procInfo, startedCallback, killer, runcCall)
+	exitErr := exitError(ctx, state.exitCodePath, callErr, state.procInfo.Meta.ValidExitCodes)
+
+	// Send exit code to ExecAttachable for streaming clients
+	// This must happen after exitError writes the exit code to file
+	if state.execAttachable != nil {
+		// Extract the exit code from the error or use 0 for success
+		exitCode := int32(0)
+		if exitErr != nil {
+			var gwExitErr *gatewayapi.ExitError
+			if errors.As(exitErr, &gwExitErr) {
+				exitCode = int32(gwExitErr.ExitCode)
+			} else {
+				// Unknown error, use special exit code
+				exitCode = int32(gatewayapi.UnknownExitStatus)
+			}
+		}
+
+		// Send exit code to streaming clients
+		if sendErr := state.execAttachable.SendExitCode(exitCode); sendErr != nil {
+			bklog.G(ctx).WithError(sendErr).Warn("failed to send exit code to exec attachable")
+		}
+	}
+
+	return exitErr
 }

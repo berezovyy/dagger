@@ -179,6 +179,7 @@ func (w *Worker) Run(
 		w.setupRootfs,
 		w.setUserGroup,
 		w.setExitCodePath,
+		w.setupExecStreaming, // Setup streaming before setupStdio
 		w.setupStdio,
 		w.setupOTel,
 		w.setupSecretScrubbing,
