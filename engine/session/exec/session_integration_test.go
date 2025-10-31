@@ -82,7 +82,7 @@ func TestSessionManagerIntegration_MultipleContainerStreaming(t *testing.T) {
 
 	// Register all containers
 	for _, c := range containers {
-		err := exec.RegisterExecution(c.containerID, c.execID)
+		err := exec.RegisterExecution(c.containerID, c.execID, false)
 		require.NoError(t, err, "failed to register %s/%s", c.containerID, c.execID)
 	}
 
@@ -142,7 +142,7 @@ func TestSessionManagerIntegration_RegistrationLifecycle(t *testing.T) {
 	execID := "test-exec"
 
 	// Test 1: Register execution
-	err := exec.RegisterExecution(containerID, execID)
+	err := exec.RegisterExecution(containerID, execID, false)
 	require.NoError(t, err, "registration should succeed")
 
 	// Test 2: Verify instance exists
@@ -152,7 +152,7 @@ func TestSessionManagerIntegration_RegistrationLifecycle(t *testing.T) {
 	require.Equal(t, ExecStatusPending, instance.GetStatus(), "initial status should be pending")
 
 	// Test 3: Duplicate registration should fail
-	err = exec.RegisterExecution(containerID, execID)
+	err = exec.RegisterExecution(containerID, execID, false)
 	require.Error(t, err, "duplicate registration should fail")
 	require.Contains(t, err.Error(), "already registered", "error should mention already registered")
 
@@ -209,7 +209,7 @@ func TestSessionManagerIntegration_ConcurrentExecutionMultiplexing(t *testing.T)
 				execID := fmt.Sprintf("exec-%d", execIdx)
 
 				// Register
-				if err := exec.RegisterExecution(containerID, execID); err != nil {
+				if err := exec.RegisterExecution(containerID, execID, false); err != nil {
 					registrationErrors.Add(1)
 					return
 				}
@@ -314,12 +314,8 @@ func TestSessionManagerIntegration_InvalidContainerIDHandling(t *testing.T) {
 			execID:      "",
 			expectCode:  codes.InvalidArgument,
 		},
-		{
-			name:        "non_existent_instance",
-			containerID: "non-existent",
-			execID:      "non-existent",
-			expectCode:  codes.NotFound,
-		},
+		// NOTE: "non_existent_instance" test case removed because Session() now
+		// auto-creates instances if they don't exist (new behavior for reconnection support)
 	}
 
 	for _, tc := range testCases {
@@ -358,7 +354,7 @@ func TestSessionManagerIntegration_ClientDisconnectIsolation(t *testing.T) {
 	execID := "test-exec"
 
 	// Register execution
-	err := exec.RegisterExecution(containerID, execID)
+	err := exec.RegisterExecution(containerID, execID, false)
 	require.NoError(t, err, "registration should succeed")
 
 	// Get the instance
@@ -371,14 +367,13 @@ func TestSessionManagerIntegration_ClientDisconnectIsolation(t *testing.T) {
 	for i := 0; i < numClients; i++ {
 		clientID := fmt.Sprintf("client-%d", i)
 		clientIDs[i] = clientID
-		count := instance.AddClient(clientID)
-		require.Equal(t, i+1, count, "client count should increment")
+		err := instance.AddClient(clientID, false, 0)
+		require.NoError(t, err, "AddClient should not return error")
+		require.Equal(t, i+1, instance.GetClientCount(), "client count should increment")
 	}
 
 	// Verify all clients are connected
-	instance.mu.RLock()
-	require.Len(t, instance.clients, numClients, "all clients should be connected")
-	instance.mu.RUnlock()
+	require.Equal(t, numClients, instance.GetClientCount(), "all clients should be connected")
 
 	// Disconnect one client
 	disconnectedClient := clientIDs[2]
@@ -386,17 +381,16 @@ func TestSessionManagerIntegration_ClientDisconnectIsolation(t *testing.T) {
 	require.Equal(t, numClients-1, remaining, "remaining client count should be correct")
 
 	// Verify other clients are still connected
-	instance.mu.RLock()
+	clients := instance.GetClients()
 	for _, clientID := range clientIDs {
 		if clientID == disconnectedClient {
-			_, exists := instance.clients[clientID]
+			_, exists := clients[clientID]
 			require.False(t, exists, "disconnected client should not exist")
 		} else {
-			_, exists := instance.clients[clientID]
+			_, exists := clients[clientID]
 			require.True(t, exists, "other clients should still be connected")
 		}
 	}
-	instance.mu.RUnlock()
 
 	// Write output - should still work for remaining clients
 	stdout := exec.GetStdoutWriter(containerID, execID)
@@ -412,9 +406,7 @@ func TestSessionManagerIntegration_ClientDisconnectIsolation(t *testing.T) {
 	}
 
 	// Verify no clients remain
-	instance.mu.RLock()
-	require.Empty(t, instance.clients, "no clients should remain")
-	instance.mu.RUnlock()
+	require.Equal(t, 0, instance.GetClientCount(), "no clients should remain")
 
 	// Cleanup
 	err = exec.UnregisterExecution(containerID, execID)
@@ -438,7 +430,7 @@ func TestSessionManagerIntegration_RegistryCleanupOnSessionEnd(t *testing.T) {
 	}
 
 	for _, c := range containers {
-		err := exec.RegisterExecution(c.containerID, c.execID)
+		err := exec.RegisterExecution(c.containerID, c.execID, false)
 		require.NoError(t, err, "registration should succeed")
 
 		// Write some data and mark as exited
@@ -483,7 +475,7 @@ func TestSessionManagerIntegration_AutomaticCleanupOfExitedInstances(t *testing.
 	execID := "test-exec"
 
 	// Register and mark as exited
-	err := exec.RegisterExecution(containerID, execID)
+	err := exec.RegisterExecution(containerID, execID, false)
 	require.NoError(t, err, "registration should succeed")
 
 	instance, err := exec.registry.GetInstance(containerID, execID)
@@ -518,7 +510,7 @@ func TestSessionManagerIntegration_ExitedInstanceRetention(t *testing.T) {
 	execID := "test-exec"
 
 	// Register and mark as exited recently
-	err := exec.RegisterExecution(containerID, execID)
+	err := exec.RegisterExecution(containerID, execID, false)
 	require.NoError(t, err, "registration should succeed")
 
 	instance, err := exec.registry.GetInstance(containerID, execID)
@@ -609,7 +601,7 @@ func TestSessionManagerIntegration_StreamingWithMultipleClients(t *testing.T) {
 	execID := "test-exec"
 
 	// Register execution
-	err := exec.RegisterExecution(containerID, execID)
+	err := exec.RegisterExecution(containerID, execID, false)
 	require.NoError(t, err, "registration should succeed")
 
 	// Verify multiple clients can be tracked
@@ -618,14 +610,14 @@ func TestSessionManagerIntegration_StreamingWithMultipleClients(t *testing.T) {
 
 	// Add multiple clients to the instance
 	const numClients = 3
-	var clientCount int
 	for i := 0; i < numClients; i++ {
 		clientID := fmt.Sprintf("client-%d", i)
-		clientCount = instance.AddClient(clientID)
+		err := instance.AddClient(clientID, false, 0)
+		require.NoError(t, err, "AddClient should not return error")
 	}
 
 	// Verify all clients are tracked
-	require.Equal(t, numClients, clientCount, "should track all clients")
+	require.Equal(t, numClients, instance.GetClientCount(), "should track all clients")
 
 	// Write some output to verify writers work
 	stdout := exec.GetStdoutWriter(containerID, execID)
