@@ -122,6 +122,8 @@ export interface SessionResponse {
   exit?: number
   /** Ready signal (session initialized) */
   ready?: SessionReady
+  /** Sequenced output with replay support */
+  output_chunk?: OutputChunk
 }
 
 /**
@@ -139,6 +141,14 @@ export interface SessionStart {
   working_dir?: string
   /** Whether to allocate a TTY */
   tty?: boolean
+
+  // Reconnection support fields
+  /** Session ID for reconnection attempts - set this to reconnect to an existing session */
+  session_id?: string
+  /** Sequence number to start replay from (for reconnection) */
+  replay_from_sequence?: number
+  /** Optional client identifier for tracking reconnections */
+  client_id?: string
 }
 
 /**
@@ -152,8 +162,36 @@ export interface SessionResize {
 }
 
 /**
- * Empty message indicating session is ready
+ * Sequenced output chunk with replay support
+ *
+ * This message type enables reliable reconnection by providing sequence numbers
+ * and replay flags for all output data. The server can replay historical chunks
+ * during reconnection to ensure clients don't miss any data.
+ */
+export interface OutputChunk {
+  /** Monotonically increasing sequence number (starts at 1) */
+  sequence: number
+  /** Unix timestamp in nanoseconds when this chunk was generated */
+  timestamp: number
+  /** Stdout data (if any) */
+  stdout?: Buffer
+  /** Stderr data (if any) */
+  stderr?: Buffer
+  /** True if this is replayed historical data during reconnection */
+  is_replay: boolean
+  /** Number of chunks dropped before this one (for gap detection) */
+  gap_before?: number
+}
+
+/**
+ * Session ready signal with reconnection metadata
  */
 export interface SessionReady {
-  // Empty message
+  // Reconnection support fields
+  /** Server-assigned session ID for reconnection - save this to reconnect later */
+  session_id?: string
+  /** Current terminal size (if TTY is allocated) */
+  terminal_size?: SessionResize
+  /** Signals end of replay data (true when all historical data has been sent) */
+  replay_complete?: boolean
 }

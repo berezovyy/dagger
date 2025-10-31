@@ -2,6 +2,7 @@ import type {
   ContainerStatusResponse,
   ContainerLifecycleEvent,
 } from "../grpc/types"
+import type { TTYSession } from "./tty_session"
 
 /**
  * Module augmentation to extend the generated Container class
@@ -114,5 +115,94 @@ declare module "./client.gen" {
      * ```
      */
     subscribeLifecycle(): AsyncIterable<ContainerLifecycleEvent>
+
+    /**
+     * Create an interactive TTY session for the container
+     *
+     * Opens a bidirectional streaming connection that allows you to:
+     * - Send stdin input to the container
+     * - Receive stdout/stderr output in real-time
+     * - Resize the terminal dynamically
+     * - Reconnect to the session if disconnected
+     *
+     * This method creates a new TTY session with a shell (or custom command) running inside
+     * the container. The session persists on the server, allowing reconnection in case of
+     * network interruption.
+     *
+     * @param options - Configuration for the TTY session
+     * @param options.command - Command to execute (defaults to ["/bin/sh"])
+     * @param options.env - Environment variables for the session
+     * @param options.workingDir - Working directory for the command
+     * @param options.clientId - Optional client identifier for tracking
+     * @returns TTYSession instance for interacting with the terminal
+     *
+     * @example
+     * ```typescript
+     * const container = dag.container().from("ubuntu:latest")
+     * const session = await container.terminal({ command: ["/bin/bash"] })
+     *
+     * // Write commands to stdin
+     * await session.writeStdin("ls -la\n")
+     * await session.writeStdin("echo hello\n")
+     *
+     * // Read output
+     * for await (const output of session) {
+     *   if (output.stdout) {
+     *     process.stdout.write(output.stdout)
+     *   }
+     *   if (output.exitCode !== undefined) {
+     *     console.log(`Exited with code: ${output.exitCode}`)
+     *     break
+     *   }
+     * }
+     * ```
+     */
+    terminal(options?: {
+      command?: string[]
+      env?: Record<string, string>
+      workingDir?: string
+      clientId?: string
+    }): Promise<TTYSession>
+
+    /**
+     * Reconnect to an existing TTY session
+     *
+     * Reconnects to a TTY session that was previously created with terminal().
+     * The server will replay any output that was generated while disconnected,
+     * starting from the specified sequence number.
+     *
+     * This enables reliable terminal sessions that can survive network interruptions,
+     * client restarts, or intentional disconnections.
+     *
+     * @param sessionId - The session ID to reconnect to (obtained from previous session)
+     * @param options - Reconnection options
+     * @param options.replayFromSequence - Sequence number to start replay from (0 = replay all available)
+     * @param options.clientId - Optional client identifier for tracking
+     * @returns TTYSession instance reconnected to the existing session
+     *
+     * @example
+     * ```typescript
+     * // Create initial session
+     * const session1 = await container.terminal()
+     * const sessionId = session1.sessionId
+     *
+     * // ... later, after disconnect ...
+     *
+     * // Reconnect to the same session
+     * const session2 = await container.reconnectTerminal(sessionId, {
+     *   replayFromSequence: session1.lastSequence
+     * })
+     *
+     * // Continue where you left off
+     * await session2.writeStdin("pwd\n")
+     * ```
+     */
+    reconnectTerminal(
+      sessionId: string,
+      options?: {
+        replayFromSequence?: number
+        clientId?: string
+      },
+    ): Promise<TTYSession>
   }
 }
