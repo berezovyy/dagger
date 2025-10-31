@@ -160,10 +160,11 @@ func (m *SessionResponse) GetReady() *Ready {
 
 type Start struct {
 	ContainerId string            `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	Command     []string          `protobuf:"bytes,2,rep,name=command,proto3" json:"command,omitempty"`
-	Env         map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	WorkingDir  string            `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
-	Tty         bool              `protobuf:"varint,5,opt,name=tty,proto3" json:"tty,omitempty"`
+	ExecId      string            `protobuf:"bytes,2,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	Command     []string          `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
+	Env         map[string]string `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	WorkingDir  string            `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
+	Tty         bool              `protobuf:"varint,6,opt,name=tty,proto3" json:"tty,omitempty"`
 }
 
 func (m *Start) Reset()      { *m = Start{} }
@@ -176,6 +177,13 @@ func (m *Start) String() string { return proto.CompactTextString(m) }
 func (m *Start) GetContainerId() string {
 	if m != nil {
 		return m.ContainerId
+	}
+	return ""
+}
+
+func (m *Start) GetExecId() string {
+	if m != nil {
+		return m.ExecId
 	}
 	return ""
 }

@@ -37,10 +37,11 @@ message SessionResponse {
 
 message Start {
 	string container_id = 1;
-	repeated string command = 2;
-	map<string, string> env = 3;
-	string working_dir = 4;
-	bool tty = 5;
+	string exec_id = 2;
+	repeated string command = 3;
+	map<string, string> env = 4;
+	string working_dir = 5;
+	bool tty = 6;
 }
 
 message Resize {
