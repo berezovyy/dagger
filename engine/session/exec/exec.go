@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	runc "github.com/containerd/go-runc"
@@ -15,6 +14,13 @@ import (
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
 )
+
+// RuncClient interface abstracts runc operations for testing.
+type RuncClient interface {
+	Pause(ctx context.Context, id string) error
+	Resume(ctx context.Context, id string) error
+	Kill(ctx context.Context, id string, sig int, opts *runc.KillOpts) error
+}
 
 // ContainerStateRegistry interface to avoid circular import with buildkit package.
 // This interface defines the methods needed to query container state.
@@ -60,25 +66,15 @@ type ContainerResourceUsage struct {
 //
 // Thread-safety: Multiple clients can connect to the same exec session.
 // Each client receives independent streams but they all receive the same data.
+// Uses ExecSessionRegistry for multiplexing exec sessions across containers.
 type ExecAttachable struct {
 	rootCtx context.Context
 
-	// Channels for streaming data from container to clients
-	stdoutChan chan []byte
-	stderrChan chan []byte
-	exitChan   chan int32
-
-	// Session lifecycle management
-	mu           sync.Mutex
-	sessionReady chan struct{} // Closed when first client connects
-	sessionDone  chan struct{} // Closed when session completes
-	clients      int           // Number of connected clients
-
-	// Ensure channels are closed only once
-	closeOnce sync.Once
+	// Registry for managing multiple exec instances
+	registry *ExecSessionRegistry
 
 	// Container control operations
-	runcClient    *runc.Runc
+	runcClient    RuncClient
 	stateRegistry ContainerStateRegistry
 
 	UnimplementedExecServer
@@ -86,14 +82,11 @@ type ExecAttachable struct {
 
 // NewExecAttachable creates a new ExecAttachable for streaming container exec output.
 // The rootCtx is the context for the entire session lifecycle.
+// Initializes the ExecSessionRegistry for managing multiple exec instances.
 func NewExecAttachable(rootCtx context.Context) *ExecAttachable {
 	return &ExecAttachable{
-		rootCtx:      rootCtx,
-		stdoutChan:   make(chan []byte, 100), // Buffered to handle bursts
-		stderrChan:   make(chan []byte, 100),
-		exitChan:     make(chan int32, 1), // Buffered since exit code is sent once
-		sessionReady: make(chan struct{}),
-		sessionDone:  make(chan struct{}),
+		rootCtx:  rootCtx,
+		registry: NewExecSessionRegistry(rootCtx),
 	}
 }
 
@@ -107,29 +100,79 @@ func (e *ExecAttachable) SetStateRegistry(registry ContainerStateRegistry) {
 	e.stateRegistry = registry
 }
 
+// RegisterExecution creates and registers a new exec instance in the registry.
+// This must be called before GetStdoutWriter/GetStderrWriter can be used.
+// Returns an error if an instance with the same containerID/execID already exists.
+func (e *ExecAttachable) RegisterExecution(containerID, execID string) error {
+	_, err := e.registry.Register(containerID, execID)
+	if err != nil {
+		return fmt.Errorf("failed to register exec instance: %w", err)
+	}
+	bklog.G(e.rootCtx).Debugf("registered execution: container=%s exec=%s", containerID, execID)
+	return nil
+}
+
+// UnregisterExecution removes an exec instance from the registry and cleans it up.
+// This should be called when the exec session is completely done.
+// Returns an error if the instance is not found.
+func (e *ExecAttachable) UnregisterExecution(containerID, execID string) error {
+	err := e.registry.Unregister(containerID, execID)
+	if err != nil {
+		return fmt.Errorf("failed to unregister exec instance: %w", err)
+	}
+	bklog.G(e.rootCtx).Debugf("unregistered execution: container=%s exec=%s", containerID, execID)
+	return nil
+}
+
+// GetStdoutWriter returns an io.Writer for streaming stdout from the specified exec instance.
+// The exec instance must be registered first via RegisterExecution.
+// Returns nil if the instance is not found.
+func (e *ExecAttachable) GetStdoutWriter(containerID, execID string) io.Writer {
+	writer, err := e.registry.GetStdoutWriter(containerID, execID)
+	if err != nil {
+		bklog.G(e.rootCtx).WithError(err).Warnf("failed to get stdout writer for %s/%s", containerID, execID)
+		return nil
+	}
+	return writer
+}
+
+// GetStderrWriter returns an io.Writer for streaming stderr from the specified exec instance.
+// The exec instance must be registered first via RegisterExecution.
+// Returns nil if the instance is not found.
+func (e *ExecAttachable) GetStderrWriter(containerID, execID string) io.Writer {
+	writer, err := e.registry.GetStderrWriter(containerID, execID)
+	if err != nil {
+		bklog.G(e.rootCtx).WithError(err).Warnf("failed to get stderr writer for %s/%s", containerID, execID)
+		return nil
+	}
+	return writer
+}
+
+// SendExitCode sends the exit code to all clients connected to the specified exec instance.
+// This marks the exec instance as exited and delivers the exit code to all connected clients.
+// Returns an error if the instance is not found.
+func (e *ExecAttachable) SendExitCode(containerID, execID string, code int32) error {
+	err := e.registry.SendExitCode(containerID, execID, code)
+	if err != nil {
+		return fmt.Errorf("failed to send exit code: %w", err)
+	}
+	bklog.G(e.rootCtx).Debugf("sent exit code %d for %s/%s", code, containerID, execID)
+	return nil
+}
+
 // Session implements the bidirectional streaming RPC for exec sessions.
 // Flow:
-// 1. Client connects and sends Start request with exec parameters
-// 2. Server sends Ready response
-// 3. Server streams stdout/stderr as container produces output
-// 4. Server sends exit code when container completes
-// 5. Stream closes
+// 1. Client connects and sends Start request with containerID and execID
+// 2. Server looks up exec instance from registry
+// 3. Server sends Ready response
+// 4. Server streams stdout/stderr as container produces output
+// 5. Server sends exit code when container completes
+// 6. Stream closes
+//
+// Multiple clients can connect to the same exec instance and will all receive the same output.
 func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 	ctx, cancel := context.WithCancelCause(srv.Context())
 	defer cancel(errors.New("exec session finished"))
-
-	// Track client connection
-	e.mu.Lock()
-	e.clients++
-	firstClient := e.clients == 1
-	e.mu.Unlock()
-
-	// Decrement client count on exit
-	defer func() {
-		e.mu.Lock()
-		e.clients--
-		e.mu.Unlock()
-	}()
 
 	// Wait for and process Start request from client
 	req, err := srv.Recv()
@@ -142,18 +185,37 @@ func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 		return fmt.Errorf("first message must be Start request")
 	}
 
+	// Extract containerID and execID from Start message
+	containerID := startMsg.ContainerId
+	execID := startMsg.ExecId
+	if containerID == "" {
+		return status.Errorf(codes.InvalidArgument, "container_id cannot be empty")
+	}
+	if execID == "" {
+		return status.Errorf(codes.InvalidArgument, "exec_id cannot be empty")
+	}
+
+	// Look up ExecInstance from registry
+	instance, err := e.registry.GetInstance(containerID, execID)
+	if err != nil {
+		bklog.G(ctx).WithError(err).Debugf("exec instance not found: %s/%s", containerID, execID)
+		return status.Errorf(codes.NotFound, "exec instance not found: %s/%s", containerID, execID)
+	}
+
+	// Generate a unique client ID for tracking
+	clientID := fmt.Sprintf("client-%d", time.Now().UnixNano())
+
+	// Track client connection in instance
+	instance.AddClient(clientID)
+	defer instance.RemoveClient(clientID)
+
 	// Log the exec session start
-	bklog.G(ctx).Debugf("exec session started: container=%s command=%v",
-		startMsg.ContainerId, startMsg.Command)
+	bklog.G(ctx).Debugf("exec session started: container=%s exec=%s client=%s command=%v",
+		containerID, execID, clientID, startMsg.Command)
 
 	// Send ready signal to client
 	if err := e.sendReady(srv); err != nil {
 		return fmt.Errorf("sending ready: %w", err)
-	}
-
-	// Signal that session is ready (for first client only)
-	if firstClient {
-		close(e.sessionReady)
 	}
 
 	// Start goroutines to handle client requests and stream output
@@ -161,12 +223,12 @@ func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 
 	// Goroutine to handle incoming client messages (stdin, resize, etc.)
 	go func() {
-		errChan <- e.handleClientMessages(ctx, srv)
+		errChan <- e.handleClientMessages(ctx, srv, instance)
 	}()
 
 	// Goroutine to stream output to client
 	go func() {
-		errChan <- e.streamOutput(ctx, srv)
+		errChan <- e.streamOutput(ctx, srv, instance)
 	}()
 
 	// Wait for either goroutine to finish or error
@@ -185,7 +247,7 @@ func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 		}
 		if grpcerrors.Code(err) == codes.Unavailable {
 			// Client disconnected
-			bklog.G(ctx).Debug("exec session: client disconnected")
+			bklog.G(ctx).Debugf("exec session: client %s disconnected", clientID)
 			return nil
 		}
 		return err
@@ -195,8 +257,8 @@ func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 }
 
 // handleClientMessages processes incoming messages from the client.
-// Currently handles stdin and resize requests.
-func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_SessionServer) error {
+// Handles stdin and resize requests by forwarding them to the exec instance.
+func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_SessionServer, instance *ExecInstance) error {
 	for {
 		req, err := srv.Recv()
 		if err != nil {
@@ -216,12 +278,20 @@ func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_Sess
 		// Handle different message types
 		switch msg := req.GetMsg().(type) {
 		case *SessionRequest_Stdin:
-			// TODO: Forward stdin to container if TTY is enabled
-			bklog.G(ctx).Debugf("received stdin: %d bytes", len(msg.Stdin))
+			// Forward stdin to container (currently not implemented in ExecInstance)
+			if err := instance.WriteStdin(msg.Stdin); err != nil {
+				bklog.G(ctx).WithError(err).Debug("failed to forward stdin")
+			} else {
+				bklog.G(ctx).Debugf("forwarded stdin: %d bytes", len(msg.Stdin))
+			}
 
 		case *SessionRequest_Resize:
-			// TODO: Resize container TTY if enabled
-			bklog.G(ctx).Debugf("received resize: %dx%d", msg.Resize.Width, msg.Resize.Height)
+			// Forward resize to container (currently not implemented in ExecInstance)
+			if err := instance.SendResize(uint32(msg.Resize.Width), uint32(msg.Resize.Height)); err != nil {
+				bklog.G(ctx).WithError(err).Debug("failed to forward resize")
+			} else {
+				bklog.G(ctx).Debugf("forwarded resize: %dx%d", msg.Resize.Width, msg.Resize.Height)
+			}
 
 		case *SessionRequest_Start:
 			// Unexpected - Start should only be sent once at beginning
@@ -233,18 +303,23 @@ func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_Sess
 	}
 }
 
-// streamOutput streams stdout, stderr, and exit code to the client.
+// streamOutput streams stdout, stderr, and exit code to the client from the exec instance.
 // This runs until the session completes or the context is cancelled.
-func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServer) error {
+func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServer, instance *ExecInstance) error {
+	// Get channels from instance
+	stdoutChan := instance.stdoutChan
+	stderrChan := instance.stderrChan
+	exitChan := instance.exitChan
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case data, ok := <-e.stdoutChan:
+		case data, ok := <-stdoutChan:
 			if !ok {
 				// Stdout channel closed, continue to get stderr and exit
-				e.stdoutChan = nil
+				stdoutChan = nil
 				continue
 			}
 			if err := srv.Send(&SessionResponse{
@@ -255,10 +330,10 @@ func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServe
 				return fmt.Errorf("sending stdout: %w", err)
 			}
 
-		case data, ok := <-e.stderrChan:
+		case data, ok := <-stderrChan:
 			if !ok {
 				// Stderr channel closed, continue to get exit
-				e.stderrChan = nil
+				stderrChan = nil
 				continue
 			}
 			if err := srv.Send(&SessionResponse{
@@ -269,7 +344,7 @@ func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServe
 				return fmt.Errorf("sending stderr: %w", err)
 			}
 
-		case exitCode, ok := <-e.exitChan:
+		case exitCode, ok := <-exitChan:
 			if !ok {
 				// Exit channel closed without exit code
 				return fmt.Errorf("exit channel closed unexpectedly")
@@ -288,7 +363,7 @@ func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServe
 		}
 
 		// If all channels are closed and we haven't received exit, something is wrong
-		if e.stdoutChan == nil && e.stderrChan == nil && e.exitChan == nil {
+		if stdoutChan == nil && stderrChan == nil && exitChan == nil {
 			return fmt.Errorf("all channels closed without exit code")
 		}
 	}
@@ -303,116 +378,17 @@ func (e *ExecAttachable) sendReady(srv Exec_SessionServer) error {
 	})
 }
 
-// streamWriter implements io.Writer and sends data to the appropriate channel.
-// This is used by TeeWriter to stream container output to gRPC clients.
-type streamWriter struct {
-	ctx     context.Context
-	channel chan []byte
-	name    string // "stdout" or "stderr" for logging
-}
-
-// Write implements io.Writer interface.
-// It copies the data and sends it to the channel non-blockingly.
-func (w *streamWriter) Write(p []byte) (n int, err error) {
-	// Don't write empty data
-	if len(p) == 0 {
-		return 0, nil
-	}
-
-	// Make a copy since the caller may reuse the buffer
-	data := make([]byte, len(p))
-	copy(data, p)
-
-	// Non-blocking send
-	select {
-	case w.channel <- data:
-		return len(p), nil
-	case <-w.ctx.Done():
-		return 0, w.ctx.Err()
-	default:
-		// Channel is full, log warning but don't block
-		// This matches the TeeWriter behavior
-		bklog.G(w.ctx).Warnf("exec %s channel full, dropping %d bytes", w.name, len(p))
-		return len(p), nil
-	}
-}
-
-// NewStdoutWriter returns an io.Writer that streams stdout to gRPC clients.
-// This writer is thread-safe and non-blocking.
-func (e *ExecAttachable) NewStdoutWriter() io.Writer {
-	return &streamWriter{
-		ctx:     e.rootCtx,
-		channel: e.stdoutChan,
-		name:    "stdout",
-	}
-}
-
-// NewStderrWriter returns an io.Writer that streams stderr to gRPC clients.
-// This writer is thread-safe and non-blocking.
-func (e *ExecAttachable) NewStderrWriter() io.Writer {
-	return &streamWriter{
-		ctx:     e.rootCtx,
-		channel: e.stderrChan,
-		name:    "stderr",
-	}
-}
-
-// SendExitCode sends the exit code to all connected clients and closes the session.
-// This should be called once when the container process completes.
-// It's safe to call multiple times (subsequent calls are no-ops).
-func (e *ExecAttachable) SendExitCode(exitCode int32) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// Send exit code (non-blocking since channel is buffered)
-	select {
-	case e.exitChan <- exitCode:
-		bklog.G(e.rootCtx).Debugf("sent exit code %d to clients", exitCode)
-	default:
-		// Exit code already sent or channel closed
-		bklog.G(e.rootCtx).Debug("exit code already sent or channel closed")
-	}
-
-	return nil
-}
-
-// Close closes all channels and cleans up resources.
-// This should be called when the exec session is completely done.
-// It waits for all buffered data to be sent before closing.
+// Close closes the registry and cleans up all exec instances.
+// This should be called when the ExecAttachable is no longer needed.
 func (e *ExecAttachable) Close() error {
-	e.closeOnce.Do(func() {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
-		// Close all channels to signal end of stream
-		close(e.stdoutChan)
-		close(e.stderrChan)
-		close(e.exitChan)
-		close(e.sessionDone)
-
-		bklog.G(e.rootCtx).Debug("exec session channels closed")
-	})
-
-	return nil
-}
-
-// WaitReady blocks until the first client connects and the session is ready.
-// This is useful for ensuring clients are connected before starting exec.
-func (e *ExecAttachable) WaitReady(ctx context.Context) error {
-	select {
-	case <-e.sessionReady:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-e.rootCtx.Done():
-		return e.rootCtx.Err()
+	if e.registry != nil {
+		if err := e.registry.Close(); err != nil {
+			bklog.G(e.rootCtx).WithError(err).Warn("error closing exec session registry")
+			return err
+		}
+		bklog.G(e.rootCtx).Debug("exec session registry closed")
 	}
-}
-
-// Done returns a channel that's closed when the session is complete.
-// Useful for waiting on session completion.
-func (e *ExecAttachable) Done() <-chan struct{} {
-	return e.sessionDone
+	return nil
 }
 
 // ContainerLifecycle implements the streaming RPC for container lifecycle events.

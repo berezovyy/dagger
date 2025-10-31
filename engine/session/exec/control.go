@@ -6,7 +6,6 @@ import (
 	"strings"
 	"syscall"
 
-	runc "github.com/containerd/go-runc"
 	"github.com/dagger/dagger/internal/buildkit/util/bklog"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -16,7 +15,7 @@ import (
 type ExecOption func(*ExecAttachable)
 
 // WithRuncClient sets the runc client for container control operations.
-func WithRuncClient(runcClient *runc.Runc) ExecOption {
+func WithRuncClient(runcClient RuncClient) ExecOption {
 	return func(e *ExecAttachable) {
 		e.runcClient = runcClient
 	}
