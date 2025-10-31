@@ -24,6 +24,7 @@ import (
 	runc "github.com/containerd/go-runc"
 	"github.com/dagger/dagger/dagql/call"
 	"github.com/dagger/dagger/engine/server/resource"
+	sessionexec "github.com/dagger/dagger/engine/session/exec"
 	"github.com/dagger/dagger/internal/buildkit/client/llb"
 	"github.com/dagger/dagger/internal/buildkit/executor"
 	"github.com/dagger/dagger/internal/buildkit/executor/oci"
@@ -371,11 +372,11 @@ func (w *Worker) Exec(ctx context.Context, id string, process executor.ProcessIn
 		}
 	}
 
-	err = w.exec(ctx, id, spec.Process, process, nil)
+	err = w.exec(ctx, id, spec.Process, process, nil, nil)
 	return exitError(ctx, "", err, process.Meta.ValidExitCodes)
 }
 
-func (w *Worker) exec(ctx context.Context, id string, specsProcess *specs.Process, process executor.ProcessInfo, started func()) error {
+func (w *Worker) exec(ctx context.Context, id string, specsProcess *specs.Process, process executor.ProcessInfo, started func(), execInstance *sessionexec.ExecInstance) error {
 	killer, err := newExecProcKiller(w.runc, id)
 	if err != nil {
 		return fmt.Errorf("failed to initialize process killer: %w", err)
@@ -388,7 +389,7 @@ func (w *Worker) exec(ctx context.Context, id string, specsProcess *specs.Proces
 			IO:      io,
 			PidFile: pidfile,
 		})
-	})
+	}, execInstance)
 }
 
 func (w *Worker) validateEntitlements(meta executor.Meta) error {
@@ -733,7 +734,7 @@ func handleSignals(ctx context.Context, runcProcess *procHandle, signals <-chan 
 
 type runcCall func(ctx context.Context, started chan<- int, io runc.IO, pidfile string) error
 
-func (w *Worker) callWithIO(ctx context.Context, process *executor.ProcessInfo, started func(), killer procKiller, call runcCall) error {
+func (w *Worker) callWithIO(ctx context.Context, process *executor.ProcessInfo, started func(), killer procKiller, call runcCall, execInstance *sessionexec.ExecInstance) error {
 	runcProcess, ctx := runcProcessHandle(ctx, killer)
 	defer runcProcess.Release()
 
@@ -782,9 +783,24 @@ func (w *Worker) callWithIO(ctx context.Context, process *executor.ProcessInfo, 
 		}
 	}()
 
-	if process.Stdin != nil {
+	// Check if we have an ExecInstance with TTY stdin
+	var stdinReader io.Reader
+	if execInstance != nil && execInstance.IsTTY() {
+		// Use ExecInstance stdin reader (from gRPC clients)
+		reader, err := execInstance.GetStdinReader(ctx)
+		if err != nil {
+			bklog.G(ctx).WithError(err).Warn("failed to get stdin reader from exec instance")
+			stdinReader = process.Stdin
+		} else {
+			stdinReader = reader
+		}
+	} else {
+		stdinReader = process.Stdin
+	}
+
+	if stdinReader != nil {
 		eg.Go(func() error {
-			_, err := io.Copy(ptm, process.Stdin)
+			_, err := io.Copy(ptm, stdinReader)
 			// stdin might be a pipe, so this is like EOF
 			if errors.Is(err, io.ErrClosedPipe) {
 				return nil
@@ -809,6 +825,64 @@ func (w *Worker) callWithIO(ctx context.Context, process *executor.ProcessInfo, 
 		})
 	}
 
+	// Create a merged resize channel from both sources
+	mergedResize := make(chan console.WinSize, 10)
+
+	// Forward from buildkit process.Resize
+	if process.Resize != nil {
+		eg.Go(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case size, ok := <-process.Resize:
+					if !ok {
+						return nil
+					}
+					winSize := console.WinSize{
+						Height: uint16(size.Rows),
+						Width:  uint16(size.Cols),
+					}
+					select {
+					case mergedResize <- winSize:
+					case <-ctx.Done():
+						return nil
+					}
+				}
+			}
+		})
+	}
+
+	// Forward from ExecInstance resize channel (gRPC clients)
+	if execInstance != nil && execInstance.IsTTY() {
+		resizeChan := execInstance.GetResizeChannel()
+		if resizeChan != nil {
+			eg.Go(func() error {
+				for {
+					select {
+					case <-ctx.Done():
+						return nil
+					case size, ok := <-resizeChan:
+						if !ok {
+							return nil
+						}
+						// Convert from ExecInstance WinSize to console.WinSize
+						winSize := console.WinSize{
+							Width:  uint16(size.Cols),
+							Height: uint16(size.Rows),
+						}
+						select {
+						case mergedResize <- winSize:
+						case <-ctx.Done():
+							return nil
+						}
+					}
+				}
+			})
+		}
+	}
+
+	// Handle resize events from merged channel
 	eg.Go(func() error {
 		err := runcProcess.WaitForReady(ctx)
 		if err != nil {
@@ -818,11 +892,8 @@ func (w *Worker) callWithIO(ctx context.Context, process *executor.ProcessInfo, 
 			select {
 			case <-ctx.Done():
 				return nil
-			case resize := <-process.Resize:
-				err = ptm.Resize(console.WinSize{
-					Height: uint16(resize.Rows),
-					Width:  uint16(resize.Cols),
-				})
+			case resize := <-mergedResize:
+				err = ptm.Resize(resize)
 				if err != nil {
 					bklog.G(ctx).Errorf("failed to resize ptm: %s", err)
 				}

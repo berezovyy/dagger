@@ -584,7 +584,13 @@ func (w *Worker) setupExecStreaming(ctx context.Context, state *execState) error
 	containerID := state.id
 	execID := state.id
 
-	if err := state.execAttachable.RegisterExecution(containerID, execID); err != nil {
+	// Extract TTY flag from process metadata
+	isTTY := false
+	if state.procInfo != nil && state.procInfo.Meta.Tty {
+		isTTY = true
+	}
+
+	if err := state.execAttachable.RegisterExecution(containerID, execID, isTTY); err != nil {
 		// Log warning but don't fail - continue without streaming
 		bklog.G(ctx).WithError(err).Warn("failed to register execution for streaming, continuing without streaming")
 		state.execAttachable = nil
@@ -1313,7 +1319,17 @@ func (w *Worker) runContainer(ctx context.Context, state *execState) (rerr error
 		return err
 	}
 
-	callErr := w.callWithIO(ctx, state.procInfo, startedCallback, killer, runcCall)
+	// Get ExecInstance for stdin and resize forwarding
+	var execInstance *exec.ExecInstance
+	if state.execAttachable != nil {
+		var err error
+		execInstance, err = state.execAttachable.GetInstance(state.id, state.id)
+		if err != nil {
+			bklog.G(ctx).WithError(err).Debug("failed to get exec instance for PTY integration")
+		}
+	}
+
+	callErr := w.callWithIO(ctx, state.procInfo, startedCallback, killer, runcCall, execInstance)
 	exitErr := exitError(ctx, state.exitCodePath, callErr, state.procInfo.Meta.ValidExitCodes)
 
 	// Send exit code to ExecAttachable for streaming clients

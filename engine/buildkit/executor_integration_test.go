@@ -34,7 +34,7 @@ func TestExecutorExecStreamingIntegration(t *testing.T) {
 	execID := "test-exec-123"
 
 	// Step 1: Register execution (simulating setupExecStreaming)
-	err := execAttachable.RegisterExecution(containerID, execID)
+	err := execAttachable.RegisterExecution(containerID, execID, false)
 	if err != nil {
 		t.Fatalf("Failed to register execution: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestExecStateLifecycle(t *testing.T) {
 	execID := state.id
 
 	// Register execution
-	err := state.execAttachable.RegisterExecution(containerID, execID)
+	err := state.execAttachable.RegisterExecution(containerID, execID, false)
 	if err != nil {
 		t.Fatalf("Failed to register execution: %v", err)
 	}

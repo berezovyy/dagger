@@ -41,6 +41,9 @@ type TeeWriter struct {
 
 	// streamDone signals when the stream goroutine has exited
 	streamDone chan struct{}
+
+	// streamStarted tracks whether streamWriterLoop was actually started
+	streamStarted bool
 }
 
 // NewTeeWriter creates a new TeeWriter that writes to both fileWriter and streamWriter.
@@ -96,6 +99,7 @@ func (t *TeeWriter) Write(p []byte) (n int, err error) {
 	if t.streamWriter != nil && t.streamChan != nil {
 		// Start the stream writer goroutine on first write
 		t.streamOnce.Do(func() {
+			t.streamStarted = true
 			go t.streamWriterLoop()
 		})
 
@@ -153,10 +157,12 @@ func (t *TeeWriter) Close() error {
 			close(t.streamChan)
 		}
 	}
+	streamStarted := t.streamStarted
 	t.mu.Unlock()
 
 	// Wait for the stream goroutine to finish processing any buffered data
-	if t.streamWriter != nil {
+	// Only wait if the goroutine was actually started
+	if streamStarted {
 		<-t.streamDone
 	}
 
