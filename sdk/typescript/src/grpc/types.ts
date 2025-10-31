@@ -129,6 +129,8 @@ export interface SessionResponse {
  */
 export interface SessionStart {
   container_id: string
+  /** Unique identifier for this exec session */
+  exec_id: string
   /** Command and arguments to execute */
   command: string[]
   /** Environment variables */

@@ -173,6 +173,7 @@ export async function* containerStreamLogs(
   stream.write({
     start: {
       container_id: containerId,
+      exec_id: containerId, // Use container ID as exec ID (simple strategy)
       command: [], // Empty command means stream logs only
     },
   })
