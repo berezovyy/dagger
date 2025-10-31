@@ -9,7 +9,6 @@ import (
 
 	runc "github.com/containerd/go-runc"
 	"github.com/dagger/dagger/internal/buildkit/util/bklog"
-	"github.com/dagger/dagger/internal/buildkit/util/grpcerrors"
 	"google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -103,12 +102,13 @@ func (e *ExecAttachable) SetStateRegistry(registry ContainerStateRegistry) {
 // RegisterExecution creates and registers a new exec instance in the registry.
 // This must be called before GetStdoutWriter/GetStderrWriter can be used.
 // Returns an error if an instance with the same containerID/execID already exists.
-func (e *ExecAttachable) RegisterExecution(containerID, execID string) error {
-	_, err := e.registry.Register(containerID, execID)
+func (e *ExecAttachable) RegisterExecution(containerID, execID string, isTTY bool) error {
+	// Let the registry generate a unique session ID
+	_, err := e.registry.Register(containerID, execID, "", isTTY)
 	if err != nil {
 		return fmt.Errorf("failed to register exec instance: %w", err)
 	}
-	bklog.G(e.rootCtx).Debugf("registered execution: container=%s exec=%s", containerID, execID)
+	bklog.G(e.rootCtx).Debugf("registered execution: container=%s exec=%s tty=%t", containerID, execID, isTTY)
 	return nil
 }
 
@@ -122,6 +122,12 @@ func (e *ExecAttachable) UnregisterExecution(containerID, execID string) error {
 	}
 	bklog.G(e.rootCtx).Debugf("unregistered execution: container=%s exec=%s", containerID, execID)
 	return nil
+}
+
+// GetInstance retrieves an exec instance by container ID and exec ID.
+// Returns the instance or an error if not found.
+func (e *ExecAttachable) GetInstance(containerID, execID string) (*ExecInstance, error) {
+	return e.registry.GetInstance(containerID, execID)
 }
 
 // GetStdoutWriter returns an io.Writer for streaming stdout from the specified exec instance.
@@ -161,67 +167,143 @@ func (e *ExecAttachable) SendExitCode(containerID, execID string, code int32) er
 }
 
 // Session implements the bidirectional streaming RPC for exec sessions.
-// Flow:
-// 1. Client connects and sends Start request with containerID and execID
-// 2. Server looks up exec instance from registry
-// 3. Server sends Ready response
-// 4. Server streams stdout/stderr as container produces output
-// 5. Server sends exit code when container completes
-// 6. Stream closes
-//
-// Multiple clients can connect to the same exec instance and will all receive the same output.
+// Supports both new session creation and reconnection flows.
+// Flow for new session:
+// 1. Client sends Start without session_id
+// 2. Server creates/retrieves instance and generates session_id
+// 3. Server sends Ready with session_id
+// 4. Server streams output and handles input
+// Flow for reconnection:
+// 1. Client sends Start with session_id and replay_from_sequence
+// 2. Server validates session and container/exec match
+// 3. Server sends Ready with session_id
+// 4. Server replays history (if needed) then continues streaming
 func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
-	ctx, cancel := context.WithCancelCause(srv.Context())
-	defer cancel(errors.New("exec session finished"))
+	ctx := srv.Context()
 
-	// Wait for and process Start request from client
+	// 1. Receive Start message
 	req, err := srv.Recv()
 	if err != nil {
-		return fmt.Errorf("waiting for start request: %w", err)
+		return status.Errorf(codes.Internal, "failed to receive start message: %v", err)
 	}
 
 	startMsg := req.GetStart()
 	if startMsg == nil {
-		return fmt.Errorf("first message must be Start request")
+		return status.Errorf(codes.InvalidArgument, "first message must be Start")
 	}
 
-	// Extract containerID and execID from Start message
 	containerID := startMsg.ContainerId
 	execID := startMsg.ExecId
-	if containerID == "" {
-		return status.Errorf(codes.InvalidArgument, "container_id cannot be empty")
-	}
-	if execID == "" {
-		return status.Errorf(codes.InvalidArgument, "exec_id cannot be empty")
+	sessionID := startMsg.SessionId
+	isTTY := startMsg.Tty
+
+	if containerID == "" || execID == "" {
+		return status.Errorf(codes.InvalidArgument, "container_id and exec_id required")
 	}
 
-	// Look up ExecInstance from registry
-	instance, err := e.registry.GetInstance(containerID, execID)
+	var instance *ExecInstance
+	var isReconnect bool
+	var replayFromSeq uint64
+
+	// 2. Determine if this is a reconnection or new session
+	if sessionID != "" {
+		// Reconnection flow
+		isReconnect = true
+		replayFromSeq = startMsg.ReplayFromSequence
+
+		instance, err = e.registry.GetInstanceBySessionID(sessionID)
+		if err != nil {
+			return status.Errorf(codes.NotFound, "session not found: %s", sessionID)
+		}
+
+		// Verify container/exec match
+		if instance.containerID != containerID || instance.execID != execID {
+			return status.Errorf(codes.InvalidArgument,
+				"session container/exec mismatch: expected %s:%s, got %s:%s",
+				instance.containerID, instance.execID, containerID, execID)
+		}
+	} else {
+		// New session flow
+		isReconnect = false
+		replayFromSeq = 0
+
+		// Check if already registered (from executor)
+		instance, err = e.registry.GetInstance(containerID, execID)
+		if err != nil {
+			// Not yet registered, create new instance
+			instance, err = e.registry.Register(containerID, execID, "", isTTY)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to register execution: %v", err)
+			}
+		}
+
+		sessionID = instance.GetSessionID()
+	}
+
+	// 3. Generate client ID
+	clientID := startMsg.ClientId
+	if clientID == "" {
+		clientID = fmt.Sprintf("client-%d", time.Now().UnixNano())
+	}
+
+	// 4. Add client to instance
+	err = instance.AddClient(clientID, isReconnect, replayFromSeq)
 	if err != nil {
-		bklog.G(ctx).WithError(err).Debugf("exec instance not found: %s/%s", containerID, execID)
-		return status.Errorf(codes.NotFound, "exec instance not found: %s/%s", containerID, execID)
+		return status.Errorf(codes.Internal, "failed to add client: %v", err)
 	}
-
-	// Generate a unique client ID for tracking
-	clientID := fmt.Sprintf("client-%d", time.Now().UnixNano())
-
-	// Track client connection in instance
-	instance.AddClient(clientID)
 	defer instance.RemoveClient(clientID)
 
-	// Log the exec session start
-	bklog.G(ctx).Debugf("exec session started: container=%s exec=%s client=%s command=%v",
-		containerID, execID, clientID, startMsg.Command)
-
-	// Send ready signal to client
-	if err := e.sendReady(srv); err != nil {
-		return fmt.Errorf("sending ready: %w", err)
+	// 5. Send Ready response with session ID
+	currentSize := instance.GetCurrentSize()
+	ready := &Ready{
+		SessionId: sessionID,
 	}
 
-	// Start goroutines to handle client requests and stream output
+	if currentSize != nil {
+		ready.TerminalSize = &Resize{
+			Width:  int32(currentSize.Cols),
+			Height: int32(currentSize.Rows),
+		}
+	}
+
+	if isReconnect {
+		ready.ReplayComplete = false
+	}
+
+	err = srv.Send(&SessionResponse{
+		Msg: &SessionResponse_Ready{
+			Ready: ready,
+		},
+	})
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to send ready: %v", err)
+	}
+
+	// 6. Handle replay for reconnection
+	if isReconnect && instance.IsTTY() {
+		// Replay output history
+		err = e.replayOutputHistory(ctx, srv, instance, replayFromSeq)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to replay output: %v", err)
+		}
+
+		// Send replay complete message
+		err = srv.Send(&SessionResponse{
+			Msg: &SessionResponse_Ready{
+				Ready: &Ready{
+					ReplayComplete: true,
+				},
+			},
+		})
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to send replay complete: %v", err)
+		}
+	}
+
+	// 7. Start bidirectional streaming
 	errChan := make(chan error, 2)
 
-	// Goroutine to handle incoming client messages (stdin, resize, etc.)
+	// Goroutine to handle client messages (stdin, resize)
 	go func() {
 		errChan <- e.handleClientMessages(ctx, srv, instance)
 	}()
@@ -231,74 +313,49 @@ func (e *ExecAttachable) Session(srv Exec_SessionServer) error {
 		errChan <- e.streamOutput(ctx, srv, instance)
 	}()
 
-	// Wait for either goroutine to finish or error
+	// Wait for either goroutine to complete or error
 	err = <-errChan
-	cancel(errors.New("exec session finishing"))
 
-	// Handle errors appropriately
-	if err != nil {
-		if errors.Is(err, context.Canceled) || grpcerrors.Code(err) == codes.Canceled {
-			// Normal cancellation
-			return nil
-		}
-		if errors.Is(err, io.EOF) {
-			// Normal stream close
-			return nil
-		}
-		if grpcerrors.Code(err) == codes.Unavailable {
-			// Client disconnected
-			bklog.G(ctx).Debugf("exec session: client %s disconnected", clientID)
-			return nil
-		}
-		return err
-	}
+	// Cancel context to stop other goroutine
+	// (context is already from srv.Context(), will be cancelled when connection closes)
 
-	return nil
+	return err
 }
 
 // handleClientMessages processes incoming messages from the client.
 // Handles stdin and resize requests by forwarding them to the exec instance.
 func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_SessionServer, instance *ExecInstance) error {
 	for {
-		req, err := srv.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				// Client closed their side of the stream
-				return nil
-			}
-			if errors.Is(err, context.Canceled) || grpcerrors.Code(err) == codes.Canceled {
-				return nil
-			}
-			if grpcerrors.Code(err) == codes.Unavailable {
-				return nil
-			}
-			return fmt.Errorf("receiving client message: %w", err)
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
 		}
 
-		// Handle different message types
-		switch msg := req.GetMsg().(type) {
-		case *SessionRequest_Stdin:
-			// Forward stdin to container (currently not implemented in ExecInstance)
-			if err := instance.WriteStdin(msg.Stdin); err != nil {
-				bklog.G(ctx).WithError(err).Debug("failed to forward stdin")
-			} else {
-				bklog.G(ctx).Debugf("forwarded stdin: %d bytes", len(msg.Stdin))
+		req, err := srv.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return nil // Don't propagate errors from recv, just exit gracefully
+		}
+
+		// Handle stdin
+		if stdin := req.GetStdin(); stdin != nil {
+			if err := instance.WriteStdin(stdin); err != nil {
+				// Log but don't fail session for backpressure
+				bklog.G(ctx).WithError(err).Debug("failed to write stdin")
+				continue
 			}
+		}
 
-		case *SessionRequest_Resize:
-			// Forward resize to container (currently not implemented in ExecInstance)
-			if err := instance.SendResize(uint32(msg.Resize.Width), uint32(msg.Resize.Height)); err != nil {
-				bklog.G(ctx).WithError(err).Debug("failed to forward resize")
-			} else {
-				bklog.G(ctx).Debugf("forwarded resize: %dx%d", msg.Resize.Width, msg.Resize.Height)
+		// Handle resize
+		if resize := req.GetResize(); resize != nil {
+			if err := instance.SendResize(uint32(resize.Width), uint32(resize.Height)); err != nil {
+				// Log but don't fail session
+				bklog.G(ctx).WithError(err).Debug("failed to send resize")
+				continue
 			}
-
-		case *SessionRequest_Start:
-			// Unexpected - Start should only be sent once at beginning
-			bklog.G(ctx).Warn("received unexpected Start message after session started")
-
-		default:
-			bklog.G(ctx).Warnf("received unknown message type: %T", msg)
 		}
 	}
 }
@@ -306,7 +363,6 @@ func (e *ExecAttachable) handleClientMessages(ctx context.Context, srv Exec_Sess
 // streamOutput streams stdout, stderr, and exit code to the client from the exec instance.
 // This runs until the session completes or the context is cancelled.
 func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServer, instance *ExecInstance) error {
-	// Get channels from instance
 	stdoutChan := instance.stdoutChan
 	stderrChan := instance.stderrChan
 	exitChan := instance.exitChan
@@ -316,66 +372,109 @@ func (e *ExecAttachable) streamOutput(ctx context.Context, srv Exec_SessionServe
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case data, ok := <-stdoutChan:
+		case stdout, ok := <-stdoutChan:
 			if !ok {
-				// Stdout channel closed, continue to get stderr and exit
-				stdoutChan = nil
-				continue
+				return nil
 			}
-			if err := srv.Send(&SessionResponse{
+			err := srv.Send(&SessionResponse{
 				Msg: &SessionResponse_Stdout{
-					Stdout: data,
+					Stdout: stdout,
 				},
-			}); err != nil {
-				return fmt.Errorf("sending stdout: %w", err)
+			})
+			if err != nil {
+				return err
 			}
 
-		case data, ok := <-stderrChan:
+		case stderr, ok := <-stderrChan:
 			if !ok {
-				// Stderr channel closed, continue to get exit
-				stderrChan = nil
-				continue
+				return nil
 			}
-			if err := srv.Send(&SessionResponse{
+			err := srv.Send(&SessionResponse{
 				Msg: &SessionResponse_Stderr{
-					Stderr: data,
+					Stderr: stderr,
 				},
-			}); err != nil {
-				return fmt.Errorf("sending stderr: %w", err)
+			})
+			if err != nil {
+				return err
 			}
 
 		case exitCode, ok := <-exitChan:
 			if !ok {
-				// Exit channel closed without exit code
-				return fmt.Errorf("exit channel closed unexpectedly")
+				return nil
 			}
-			// Send exit code to client
-			if err := srv.Send(&SessionResponse{
+			err := srv.Send(&SessionResponse{
 				Msg: &SessionResponse_Exit{
 					Exit: exitCode,
 				},
-			}); err != nil {
-				return fmt.Errorf("sending exit code: %w", err)
+			})
+			if err != nil {
+				return err
 			}
-			// Exit code sent, session complete
-			bklog.G(ctx).Debugf("exec session completed with exit code %d", exitCode)
-			return nil
-		}
-
-		// If all channels are closed and we haven't received exit, something is wrong
-		if stdoutChan == nil && stderrChan == nil && exitChan == nil {
-			return fmt.Errorf("all channels closed without exit code")
+			return nil // Exit code is final message
 		}
 	}
 }
 
-// sendReady sends the Ready message to the client, indicating the session is ready.
-func (e *ExecAttachable) sendReady(srv Exec_SessionServer) error {
-	return srv.Send(&SessionResponse{
-		Msg: &SessionResponse_Ready{
-			Ready: &Ready{},
-		},
-	})
+// replayOutputHistory replays buffered output to a reconnecting client
+// Note: Currently uses existing Stdout/Stderr messages instead of OutputChunk
+// until protobuf regeneration adds OutputChunk support
+func (e *ExecAttachable) replayOutputHistory(ctx context.Context, srv Exec_SessionServer, instance *ExecInstance, fromSeq uint64) error {
+	history := instance.GetOutputHistory()
+	if history == nil {
+		// No history available (non-TTY or history not initialized)
+		return nil
+	}
+
+	// Get current sequence to know where to replay to
+	currentSeq := history.GetCurrentSequence()
+	if fromSeq > currentSeq {
+		// Requested sequence is in the future, nothing to replay
+		return nil
+	}
+
+	// Check for gaps (missed data due to buffer wrap)
+	gap := history.DetectGaps(fromSeq, currentSeq)
+	if gap != nil {
+		// Log gap warning
+		bklog.G(ctx).Warnf("replay gap detected: expected seq %d, oldest available %d (lost %d chunks)",
+			gap.ExpectedStart, gap.ActualStart, gap.MissingCount)
+		// Replay from oldest available
+		fromSeq = gap.ActualStart
+	}
+
+	// Get historical chunks
+	chunks := history.GetHistoryRange(fromSeq, currentSeq)
+
+	// Stream chunks to client using existing Stdout/Stderr messages
+	// TODO: Use OutputChunk message once protobuf is regenerated
+	for _, chunk := range chunks {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		var err error
+		if chunk.Stream == StreamStdout {
+			err = srv.Send(&SessionResponse{
+				Msg: &SessionResponse_Stdout{
+					Stdout: chunk.Data,
+				},
+			})
+		} else if chunk.Stream == StreamStderr {
+			err = srv.Send(&SessionResponse{
+				Msg: &SessionResponse_Stderr{
+					Stderr: chunk.Data,
+				},
+			})
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to send replay chunk seq=%d: %w", chunk.Sequence, err)
+		}
+	}
+
+	return nil
 }
 
 // Close closes the registry and cleans up all exec instances.
@@ -477,9 +576,8 @@ func (e *ExecAttachable) ContainerStatus(
 	if err != nil {
 		// Check if container not found
 		if errors.Is(err, ErrContainerNotFound) ||
-		   (err.Error() != "" && (
-		       errors.Is(err, fmt.Errorf("container %s not found", req.ContainerId)) ||
-		       err.Error() == fmt.Sprintf("container %s not found", req.ContainerId))) {
+			(err.Error() != "" && (errors.Is(err, fmt.Errorf("container %s not found", req.ContainerId)) ||
+				err.Error() == fmt.Sprintf("container %s not found", req.ContainerId))) {
 			return nil, status.Errorf(codes.NotFound, "container not found: %s", req.ContainerId)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to get state: %v", err)
