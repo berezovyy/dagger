@@ -1,5 +1,6 @@
 import { Container } from "./client.gen.js"
 import { callUnary } from "../common/grpc/client.js"
+import { TTYSession } from "./tty_session.js"
 import type {
   ContainerStatusRequest,
   ContainerStatusResponse,
@@ -233,6 +234,66 @@ export async function* containerSubscribeLifecycle(
   }
 }
 
+/**
+ * Create an interactive TTY session for the container
+ *
+ * Opens a bidirectional streaming connection for terminal interaction.
+ * The session persists on the server and can be reconnected if disconnected.
+ *
+ * @param options - Configuration for the TTY session
+ * @returns TTYSession instance for terminal interaction
+ */
+export async function containerTerminal(
+  this: Container,
+  options?: {
+    command?: string[]
+    env?: Record<string, string>
+    workingDir?: string
+    clientId?: string
+  },
+): Promise<TTYSession> {
+  const containerId = await this.id()
+
+  const connection = (this as any)._ctx._connection
+  const client = connection.getClient()
+
+  return TTYSession.create(client, {
+    containerId,
+    execId: containerId,
+    command: options?.command,
+    env: options?.env,
+    workingDir: options?.workingDir,
+    clientId: options?.clientId,
+  })
+}
+
+/**
+ * Reconnect to an existing TTY session
+ *
+ * Reconnects to a session that was previously created, with output replay support.
+ *
+ * @param sessionId - The session ID to reconnect to
+ * @param options - Reconnection options
+ * @returns TTYSession instance reconnected to the existing session
+ */
+export async function containerReconnectTerminal(
+  this: Container,
+  sessionId: string,
+  options?: {
+    replayFromSequence?: number
+    clientId?: string
+  },
+): Promise<TTYSession> {
+  const connection = (this as any)._ctx._connection
+  const client = connection.getClient()
+
+  return TTYSession.reconnect(client, {
+    sessionId,
+    replayFromSequence: options?.replayFromSequence,
+    clientId: options?.clientId,
+  })
+}
+
 // Extend Container prototype with gRPC methods
 ;(Container.prototype as any).status = containerStatus
 ;(Container.prototype as any).pause = containerPause
@@ -240,3 +301,5 @@ export async function* containerSubscribeLifecycle(
 ;(Container.prototype as any).signal = containerSignal
 ;(Container.prototype as any).streamLogs = containerStreamLogs
 ;(Container.prototype as any).subscribeLifecycle = containerSubscribeLifecycle
+;(Container.prototype as any).terminal = containerTerminal
+;(Container.prototype as any).reconnectTerminal = containerReconnectTerminal
