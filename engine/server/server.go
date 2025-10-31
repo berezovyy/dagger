@@ -466,6 +466,9 @@ func NewServer(ctx context.Context, opts *NewServerOpts) (*Server, error) {
 	// if the operation is called.
 	srv.workerSourceManager.Register(local.NewSource())
 
+	// Create container state registry for tracking container lifecycle
+	stateRegistry := buildkit.NewContainerStateRegistry(ctx)
+
 	srv.worker = buildkit.NewWorker(&buildkit.NewWorkerOpts{
 		WorkerRoot:       srv.workerRootDir,
 		ExecutorRoot:     srv.executorRootDir,
@@ -486,6 +489,7 @@ func NewServer(ctx context.Context, opts *NewServerOpts) (*Server, error) {
 		NetworkProviders:    srv.networkProviders,
 		ParallelismSem:      srv.parallelismSem,
 		WorkerCache:         srv.workerCache,
+		StateRegistry:       stateRegistry,
 	})
 
 	//

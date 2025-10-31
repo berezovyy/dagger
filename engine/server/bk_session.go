@@ -48,6 +48,10 @@ func (srv *Server) newBuildkitSession(ctx context.Context, c *daggerClient) (*bk
 	sess.Allow(filesyncer.AsSource())
 	sess.Allow(filesyncer.AsTarget())
 
+	// Register ExecAttachable for container exec streaming
+	execAttachable := srv.worker.GetOrCreateExecAttachable(ctx)
+	sess.Allow(execAttachable)
+
 	clientConn, serverConn := net.Pipe()
 	dialer := func(ctx context.Context, proto string, meta map[string][]string) (net.Conn, error) { //nolint: unparam
 		go func() {
