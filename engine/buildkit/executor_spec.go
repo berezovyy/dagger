@@ -556,40 +556,50 @@ func (w *Worker) setExitCodePath(_ context.Context, state *execState) error {
 	return nil
 }
 
-// setupExecStreaming creates an ExecAttachable for real-time log streaming.
+// setupExecStreaming sets up the shared ExecAttachable for real-time log streaming.
 // This must be called before setupStdio so that stream writers are available.
 //
 // The ExecAttachable provides io.Writers that can stream stdout/stderr to gRPC clients.
 // These writers are used by setupStdio via TeeWriter to enable dual output (file + stream).
 //
+// This uses the Worker's shared ExecAttachable instance (created via GetOrCreateExecAttachable),
+// which ensures the state registry is properly wired and all executions share the same
+// streaming infrastructure.
+//
 // This is a best-effort operation - if setup fails, execution continues without streaming
 // (degrading gracefully to file-only output).
-//
-// Note: Currently the ExecAttachable is created but not registered with the session manager.
-// Full client discovery/connection will be implemented in a future iteration.
 func (w *Worker) setupExecStreaming(ctx context.Context, state *execState) error {
 	// Only set up streaming if we have execution metadata
-	// In the future, this may check for session manager availability
 	if w.execMD == nil {
 		bklog.G(ctx).Debug("exec streaming: no execution metadata, skipping")
 		return nil
 	}
 
-	// Create the ExecAttachable for this execution
-	// This provides stream writers that can be used by setupStdio
-	execAttachable := exec.NewExecAttachable(ctx)
-	state.execAttachable = execAttachable
+	// Get or create the shared ExecAttachable
+	// This ensures state registry is wired and all execs share the same instance
+	state.execAttachable = w.GetOrCreateExecAttachable(ctx)
 
-	// Add cleanup to close the ExecAttachable when done
-	// This ensures all buffered data is flushed and resources are released
-	state.cleanups.Add("close exec attachable", func() error {
+	// Register this execution in the ExecAttachable's registry
+	// Use state.id as both container and exec ID for now
+	containerID := state.id
+	execID := state.id
+
+	if err := state.execAttachable.RegisterExecution(containerID, execID); err != nil {
+		// Log warning but don't fail - continue without streaming
+		bklog.G(ctx).WithError(err).Warn("failed to register execution for streaming, continuing without streaming")
+		state.execAttachable = nil
+		return nil
+	}
+
+	// Add cleanup to unregister the execution when done
+	state.cleanups.Add("unregister exec streaming", func() error {
 		if state.execAttachable != nil {
-			return state.execAttachable.Close()
+			return state.execAttachable.UnregisterExecution(containerID, execID)
 		}
 		return nil
 	})
 
-	bklog.G(ctx).Debug("exec streaming: ExecAttachable created successfully")
+	bklog.G(ctx).Debug("exec streaming: registered execution with shared ExecAttachable")
 	return nil
 }
 
@@ -597,20 +607,26 @@ func (w *Worker) setupExecStreaming(ctx context.Context, state *execState) error
 // It looks up the ExecAttachable from the execState and returns the appropriate writer
 // (stdout or stderr) for streaming logs to connected gRPC clients.
 //
-// When ExecAttachable is not available (nil), this returns nil, causing TeeWriter to only
-// write to files (preserving existing behavior).
+// When ExecAttachable is not available (nil) or when the exec instance isn't registered,
+// this returns nil, causing TeeWriter to only write to files (preserving existing behavior).
 func (w *Worker) getStreamWriter(state *execState, streamType string) io.Writer {
 	// If no ExecAttachable is set, return nil (no streaming, file-only mode)
 	if state.execAttachable == nil {
 		return nil
 	}
 
+	// Need container ID and exec ID to get writers from the registry
+	// Use the exec state's ID as both container and exec ID for now
+	// In the future, this should use proper container ID tracking
+	containerID := state.id
+	execID := state.id
+
 	// Return the appropriate stream writer based on stream type
 	switch streamType {
 	case "stdout":
-		return state.execAttachable.NewStdoutWriter()
+		return state.execAttachable.GetStdoutWriter(containerID, execID)
 	case "stderr":
-		return state.execAttachable.NewStderrWriter()
+		return state.execAttachable.GetStderrWriter(containerID, execID)
 	default:
 		// Unknown stream type, return nil
 		return nil
@@ -1316,7 +1332,9 @@ func (w *Worker) runContainer(ctx context.Context, state *execState) (rerr error
 		}
 
 		// Send exit code to streaming clients
-		if sendErr := state.execAttachable.SendExitCode(exitCode); sendErr != nil {
+		containerID := state.id
+		execID := state.id
+		if sendErr := state.execAttachable.SendExitCode(containerID, execID, exitCode); sendErr != nil {
 			bklog.G(ctx).WithError(sendErr).Warn("failed to send exit code to exec attachable")
 		}
 	}

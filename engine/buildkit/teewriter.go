@@ -138,11 +138,20 @@ func (t *TeeWriter) streamWriterLoop() {
 //
 // Note: This does NOT close the underlying fileWriter or streamWriter.
 // The caller is responsible for closing those writers if needed.
+//
+// This method is idempotent and safe to call multiple times.
 func (t *TeeWriter) Close() error {
 	t.mu.Lock()
 	// Close the stream channel to signal the goroutine to exit
+	// Check if channel is still open before closing to avoid panic
 	if t.streamChan != nil {
-		close(t.streamChan)
+		select {
+		case <-t.streamDone:
+			// Stream goroutine already finished, channel already closed
+		default:
+			// Channel still open, close it
+			close(t.streamChan)
+		}
 	}
 	t.mu.Unlock()
 

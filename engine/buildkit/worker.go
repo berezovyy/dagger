@@ -7,6 +7,7 @@ import (
 
 	runc "github.com/containerd/go-runc"
 	"github.com/dagger/dagger/dagql"
+	"github.com/dagger/dagger/engine/session/exec"
 	bkcache "github.com/dagger/dagger/internal/buildkit/cache"
 	"github.com/dagger/dagger/internal/buildkit/executor"
 	"github.com/dagger/dagger/internal/buildkit/executor/oci"
@@ -61,6 +62,13 @@ type sharedWorkerState struct {
 	parallelismSem   *semaphore.Weighted
 	workerCache      bkcache.Manager
 
+	// Container state tracking for lifecycle events and status queries
+	stateRegistry *ContainerStateRegistry
+
+	// Shared ExecAttachable for streaming container logs across all executions
+	execAttachable   *exec.ExecAttachable
+	execAttachableMu sync.Mutex
+
 	running map[string]*execState
 	mu      sync.RWMutex
 }
@@ -93,6 +101,7 @@ type NewWorkerOpts struct {
 	NetworkProviders    map[pb.NetMode]network.Provider
 	ParallelismSem      *semaphore.Weighted
 	WorkerCache         bkcache.Manager
+	StateRegistry       *ContainerStateRegistry
 }
 
 func NewWorker(opts *NewWorkerOpts) *Worker {
@@ -116,6 +125,7 @@ func NewWorker(opts *NewWorkerOpts) *Worker {
 		entitlements:     opts.Entitlements,
 		parallelismSem:   opts.ParallelismSem,
 		workerCache:      opts.WorkerCache,
+		stateRegistry:    opts.StateRegistry,
 
 		running: make(map[string]*execState),
 	}}
@@ -182,4 +192,98 @@ func AsWorkerController(w worker.Worker) (*worker.Controller, error) {
 		return nil, err
 	}
 	return wc, nil
+}
+
+// GetOrCreateExecAttachable returns the shared ExecAttachable instance, creating it if needed.
+// This ensures all container executions share the same ExecAttachable for consistent streaming
+// and proper wiring of the container state registry.
+//
+// Thread-safe: Uses mutex to ensure only one ExecAttachable is created.
+func (w *Worker) GetOrCreateExecAttachable(ctx context.Context) *exec.ExecAttachable {
+	w.execAttachableMu.Lock()
+	defer w.execAttachableMu.Unlock()
+
+	// Return existing instance if already created
+	if w.execAttachable != nil {
+		return w.execAttachable
+	}
+
+	// Create new ExecAttachable
+	w.execAttachable = exec.NewExecAttachable(ctx)
+
+	// Wire the state registry if available (with adapter)
+	if w.stateRegistry != nil {
+		adapter := &stateRegistryAdapter{registry: w.stateRegistry}
+		w.execAttachable.SetStateRegistry(adapter)
+	}
+
+	return w.execAttachable
+}
+
+// stateRegistryAdapter adapts the buildkit ContainerStateRegistry to the exec package's
+// ContainerStateRegistry interface by converting between different ContainerState types.
+type stateRegistryAdapter struct {
+	registry *ContainerStateRegistry
+}
+
+// GetState implements exec.ContainerStateRegistry.GetState
+func (a *stateRegistryAdapter) GetState(containerID string) (*exec.ContainerState, error) {
+	state, err := a.registry.GetState(containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert buildkit.ContainerState to exec.ContainerState
+	execState := &exec.ContainerState{
+		ContainerID: state.ContainerID,
+		Status:      string(state.Status),
+		ExitCode:    state.ExitCode,
+		StartedAt:   state.StartedAt,
+		FinishedAt:  state.FinishedAt,
+		LastUpdated: state.LastUpdated,
+	}
+
+	// Convert resource usage if present
+	if state.ResourceUsage != nil {
+		execState.ResourceUsage = &exec.ContainerResourceUsage{
+			CPUPercent:   state.ResourceUsage.CPUPercent,
+			MemoryBytes:  state.ResourceUsage.MemoryBytes,
+			MemoryLimit:  state.ResourceUsage.MemoryLimit,
+			IOReadBytes:  state.ResourceUsage.IOReadBytes,
+			IOWriteBytes: state.ResourceUsage.IOWriteBytes,
+		}
+	}
+
+	return execState, nil
+}
+
+// Subscribe implements exec.ContainerStateRegistry.Subscribe
+func (a *stateRegistryAdapter) Subscribe(ctx context.Context, containerID string) (<-chan exec.ContainerLifecycleEventData, func()) {
+	eventChan, unsubscribe := a.registry.Subscribe(ctx, containerID)
+
+	// Create a new channel for exec events
+	execEventChan := make(chan exec.ContainerLifecycleEventData, 100)
+
+	// Start a goroutine to convert events
+	go func() {
+		defer close(execEventChan)
+		for event := range eventChan {
+			execEvent := exec.ContainerLifecycleEventData{
+				ContainerID: event.ContainerID,
+				EventType:   string(event.EventType),
+				Status:      string(event.Status),
+				Timestamp:   event.Timestamp,
+				ExitCode:    event.ExitCode,
+				Message:     event.Message,
+			}
+
+			select {
+			case execEventChan <- execEvent:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return execEventChan, unsubscribe
 }
