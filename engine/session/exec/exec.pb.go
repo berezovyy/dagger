@@ -159,12 +159,15 @@ func (m *SessionResponse) GetReady() *Ready {
 }
 
 type Start struct {
-	ContainerId string            `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	ExecId      string            `protobuf:"bytes,2,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
-	Command     []string          `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
-	Env         map[string]string `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	WorkingDir  string            `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
-	Tty         bool              `protobuf:"varint,6,opt,name=tty,proto3" json:"tty,omitempty"`
+	ContainerId        string            `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	ExecId             string            `protobuf:"bytes,2,opt,name=exec_id,json=execId,proto3" json:"exec_id,omitempty"`
+	Command            []string          `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
+	Env                map[string]string `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	WorkingDir         string            `protobuf:"bytes,5,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
+	Tty                bool              `protobuf:"varint,6,opt,name=tty,proto3" json:"tty,omitempty"`
+	SessionId          string            `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ReplayFromSequence uint64            `protobuf:"varint,8,opt,name=replay_from_sequence,json=replayFromSequence,proto3" json:"replay_from_sequence,omitempty"`
+	ClientId           string            `protobuf:"bytes,9,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
 }
 
 func (m *Start) Reset()      { *m = Start{} }
@@ -216,6 +219,27 @@ func (m *Start) GetTty() bool {
 	return false
 }
 
+func (m *Start) GetSessionId() string {
+	if m != nil {
+		return m.SessionId
+	}
+	return ""
+}
+
+func (m *Start) GetReplayFromSequence() uint64 {
+	if m != nil {
+		return m.ReplayFromSequence
+	}
+	return 0
+}
+
+func (m *Start) GetClientId() string {
+	if m != nil {
+		return m.ClientId
+	}
+	return ""
+}
+
 type Resize struct {
 	Width  int32 `protobuf:"varint,1,opt,name=Width,proto3" json:"Width,omitempty"`
 	Height int32 `protobuf:"varint,2,opt,name=Height,proto3" json:"Height,omitempty"`
@@ -243,6 +267,9 @@ func (m *Resize) GetHeight() int32 {
 }
 
 type Ready struct {
+	SessionId      string  `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TerminalSize   *Resize `protobuf:"bytes,2,opt,name=terminal_size,json=terminalSize,proto3" json:"terminal_size,omitempty"`
+	ReplayComplete bool    `protobuf:"varint,3,opt,name=replay_complete,json=replayComplete,proto3" json:"replay_complete,omitempty"`
 }
 
 func (m *Ready) Reset()      { *m = Ready{} }
@@ -251,6 +278,27 @@ func (*Ready) Descriptor() ([]byte, []int) {
 	return fileDescriptor_exec, []int{4}
 }
 func (m *Ready) String() string { return proto.CompactTextString(m) }
+
+func (m *Ready) GetSessionId() string {
+	if m != nil {
+		return m.SessionId
+	}
+	return ""
+}
+
+func (m *Ready) GetTerminalSize() *Resize {
+	if m != nil {
+		return m.TerminalSize
+	}
+	return nil
+}
+
+func (m *Ready) GetReplayComplete() bool {
+	if m != nil {
+		return m.ReplayComplete
+	}
+	return false
+}
 
 // ContainerLifecycleRequest for subscribing to container lifecycle events
 type ContainerLifecycleRequest struct {

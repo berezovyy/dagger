@@ -32,6 +32,7 @@ message SessionResponse {
 		bytes stderr = 2;
 		int32 exit = 3;
 		Ready ready = 4;
+		OutputChunk output_chunk = 5;  // Sequenced output with replay support
 	}
 }
 
@@ -42,6 +43,11 @@ message Start {
 	map<string, string> env = 4;
 	string working_dir = 5;
 	bool tty = 6;
+
+	// Reconnection support fields
+	string session_id = 7;           // Optional: for reconnection attempts
+	uint64 replay_from_sequence = 8; // Optional: where to start replay
+	string client_id = 9;            // Optional: client identifier
 }
 
 message Resize {
@@ -49,7 +55,23 @@ message Resize {
 	int32 Height = 2;
 }
 
-message Ready {}
+message Ready {
+	// Reconnection support fields
+	string session_id = 1;      // Server returns session ID for reconnection
+	Resize terminal_size = 2;   // Current terminal size (if TTY)
+	bool replay_complete = 3;   // Signals end of replay (for reconnects)
+}
+
+message OutputChunk {
+	uint64 sequence = 1;         // Monotonically increasing sequence number
+	int64 timestamp = 2;         // Unix timestamp (nanoseconds)
+	oneof data {
+		bytes stdout = 3;
+		bytes stderr = 4;
+	}
+	bool is_replay = 5;          // True if this is replayed historical data
+	uint64 gap_before = 6;       // Optional: number of dropped chunks before this one
+}
 
 message ContainerLifecycleRequest {
 	// Optional: filter by specific container ID
