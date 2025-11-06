@@ -570,7 +570,7 @@ func (CLISuite) TestDaggerDevelop(ctx context.Context, t *testctx.T) {
 			WithExec([]string{"rm", "dagger.gen.go"}).
 			WithWorkdir("/work").
 			With(daggerExec("init", "--source=.", "--sdk=go")).
-			With(daggerExec("install", "./dep")).
+			With(daggerExec("install", "--name=cooldep", "./dep")).
 			WithExec([]string{"rm", "dagger.gen.go"})
 		developed := base.With(daggerExec("develop", "--recursive"))
 
@@ -579,6 +579,12 @@ func (CLISuite) TestDaggerDevelop(ctx context.Context, t *testctx.T) {
 		require.NoError(t, err)
 		_, err = developed.File("/work/dep/dagger.gen.go").Contents(ctx)
 		require.NoError(t, err)
+
+		// make sure that even though we named the dep cooldep during install,
+		// the updated dagger.json for the dep still has the original name
+		depDaggerJSON, err := developed.File("/work/dep/dagger.json").Contents(ctx)
+		require.NoError(t, err)
+		require.Equal(t, gjson.Get(depDaggerJSON, "name").String(), "dep")
 	})
 }
 
@@ -1617,7 +1623,7 @@ func (CLISuite) TestDaggerUpdate(ctx context.Context, t *testctx.T) {
 			name:          "cannot update a local dependency",
 			daggerjson:    depIsLocal,
 			updateCmd:     []string{"update", "bar"},
-			expectedError: `updating local deps is not supported`,
+			expectedError: `updating local dependencies is not supported`,
 		},
 	}
 

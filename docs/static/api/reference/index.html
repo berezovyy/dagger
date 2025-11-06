@@ -4501,6 +4501,9 @@
                                 <h6 class="field-argument-name"><span class="property-name"><code>include</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]</code></a></span></h6>
                               </div>
                               <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
+                              </div>
+                              <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>noCache</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
                               </div>
                             </div>
@@ -4521,6 +4524,9 @@
                               </div>
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>include</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]</code></a></span></h6>
+                              </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
                               </div>
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>noCache</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
@@ -5645,6 +5651,10 @@
                                 <p>Patterns to include in the written directory (e.g. [&quot;*.go&quot;, &quot;go.mod&quot;, &quot;go.sum&quot;]).</p>
                               </div>
                               <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
+                                <p>Apply .gitignore rules when writing the directory.</p>
+                              </div>
+                              <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>owner</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
                                 <p>A user:group to set for the directory and its contents.</p>
                                 <p>The user and group can either be an ID (1000:1000) or a name (foo:bar).</p>
@@ -6619,6 +6629,10 @@
                                 <h6 class="field-argument-name"><span class="property-name"><code>include</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]</code></a></span></h6>
                                 <p>Include only artifacts that match the given pattern (e.g., [&quot;app/&quot;, &quot;package.*&quot;]).</p>
                               </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
+                                <p>Apply .gitignore filter rules inside the directory</p>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -6938,6 +6952,10 @@
                                 <h6 class="field-argument-name"><span class="property-name"><code>include</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]</code></a></span></h6>
                                 <p>If set, only paths matching one of these glob patterns is included in the new snapshot. Example: (e.g., [&quot;app/&quot;, &quot;package.*&quot;]).</p>
                               </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
+                                <p>If set, apply .gitignore rules when filtering the directory.</p>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -7122,6 +7140,10 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>include</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]</code></a></span></h6>
                                 <p>Include only artifacts that match the given pattern (e.g., [&quot;app/&quot;, &quot;package.*&quot;]).</p>
+                              </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>gitignore</code></span> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean</code></a></span></h6>
+                                <p>Apply .gitignore filter rules inside the directory</p>
                               </div>
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>owner</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
@@ -7761,6 +7783,10 @@
                       </tr>
                     </thead>
                     <tbody>
+                      <tr>
+                        <td data-property-name=""><a class="property-name" id="EnumValueTypeDef-deprecated" href="#EnumValueTypeDef-deprecated"><code>deprecated</code></a> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span> </td>
+                        <td> The reason this enum member is deprecated, if any. </td>
+                      </tr>
                       <tr>
                         <td data-property-name=""><a class="property-name" id="EnumValueTypeDef-description" href="#EnumValueTypeDef-description"><code>description</code></a> - <span class="property-type"><a href="#definition-String"><code>String!</code></a></span> </td>
                         <td> A doc string for the enum member, if any. </td>
@@ -9306,6 +9332,10 @@
                     </thead>
                     <tbody>
                       <tr>
+                        <td data-property-name=""><a class="property-name" id="FieldTypeDef-deprecated" href="#FieldTypeDef-deprecated"><code>deprecated</code></a> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span> </td>
+                        <td> The reason this enum member is deprecated, if any. </td>
+                      </tr>
+                      <tr>
                         <td data-property-name=""><a class="property-name" id="FieldTypeDef-description" href="#FieldTypeDef-description"><code>description</code></a> - <span class="property-type"><a href="#definition-String"><code>String!</code></a></span> </td>
                         <td> A doc string for the field, if any. </td>
                       </tr>
@@ -9652,6 +9682,10 @@
                         <td> Arguments accepted by the function, if any. </td>
                       </tr>
                       <tr>
+                        <td data-property-name=""><a class="property-name" id="Function-deprecated" href="#Function-deprecated"><code>deprecated</code></a> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span> </td>
+                        <td> The reason this function is deprecated, if any. </td>
+                      </tr>
+                      <tr>
                         <td data-property-name=""><a class="property-name" id="Function-description" href="#Function-description"><code>description</code></a> - <span class="property-type"><a href="#definition-String"><code>String!</code></a></span> </td>
                         <td> A doc string for the function, if any. </td>
                       </tr>
@@ -9708,6 +9742,10 @@
                                 <h6 class="field-argument-name"><span class="property-name"><code>sourceMap</code></span> - <span class="property-type"><a href="#definition-SourceMapID"><code>SourceMapID</code></a></span></h6>
                                 <p>The source map for the argument definition.</p>
                               </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>deprecated</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
+                                <p>If deprecated, the reason or migration path.</p>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -9728,6 +9766,23 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>timeToLive</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
                                 <p>The TTL for the cache policy, if applicable. Provided as a duration string, e.g. &quot;5m&quot;, &quot;1h30s&quot;.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr class="row-has-field-arguments">
+                        <td data-property-name=""><a class="property-name" id="Function-withDeprecated" href="#Function-withDeprecated"><code>withDeprecated</code></a> - <span class="property-type"><a href="#definition-Function"><code>Function!</code></a></span> </td>
+                        <td> Returns the function with the provided deprecation reason. </td>
+                      </tr>
+                      <tr class="row-field-arguments">
+                        <td colspan="2">
+                          <div class="field-arguments">
+                            <h5 class="field-arguments-heading"> Arguments </h5>
+                            <div class="field-argument-list">
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>reason</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
+                                <p>Reason or migration path describing the deprecation.</p>
                               </div>
                             </div>
                           </div>
@@ -9802,6 +9857,10 @@
                       <tr>
                         <td data-property-name=""><a class="property-name" id="FunctionArg-defaultValue" href="#FunctionArg-defaultValue"><code>defaultValue</code></a> - <span class="property-type"><a href="#definition-JSON"><code>JSON!</code></a></span> </td>
                         <td> A default value to use for this argument when not explicitly set by the caller, if any. </td>
+                      </tr>
+                      <tr>
+                        <td data-property-name=""><a class="property-name" id="FunctionArg-deprecated" href="#FunctionArg-deprecated"><code>deprecated</code></a> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span> </td>
+                        <td> The reason this function is deprecated, if any. </td>
                       </tr>
                       <tr>
                         <td data-property-name=""><a class="property-name" id="FunctionArg-description" href="#FunctionArg-description"><code>description</code></a> - <span class="property-type"><a href="#definition-String"><code>String!</code></a></span> </td>
@@ -11912,6 +11971,10 @@
                         <td> Forces evaluation of the module source, including any loading into the engine and associated validation. </td>
                       </tr>
                       <tr>
+                        <td data-property-name=""><a class="property-name" id="ModuleSource-toolchains" href="#ModuleSource-toolchains"><code>toolchains</code></a> - <span class="property-type"><a href="#definition-ModuleSource"><code>[ModuleSource!]!</code></a></span> </td>
+                        <td> The toolchains referenced by the module source. </td>
+                      </tr>
+                      <tr>
                         <td data-property-name=""><a class="property-name" id="ModuleSource-userDefaults" href="#ModuleSource-userDefaults"><code>userDefaults</code></a> - <span class="property-type"><a href="#definition-EnvFile"><code>EnvFile!</code></a></span> </td>
                         <td> User-defined defaults read from local .env files </td>
                       </tr>
@@ -12076,6 +12139,23 @@
                           </div>
                         </td>
                       </tr>
+                      <tr class="row-has-field-arguments">
+                        <td data-property-name=""><a class="property-name" id="ModuleSource-withToolchains" href="#ModuleSource-withToolchains"><code>withToolchains</code></a> - <span class="property-type"><a href="#definition-ModuleSource"><code>ModuleSource!</code></a></span> </td>
+                        <td> Add toolchains to the module source. </td>
+                      </tr>
+                      <tr class="row-field-arguments">
+                        <td colspan="2">
+                          <div class="field-arguments">
+                            <h5 class="field-arguments-heading"> Arguments </h5>
+                            <div class="field-argument-list">
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>toolchains</code></span> - <span class="property-type"><a href="#definition-ModuleSourceID"><code>[ModuleSourceID!]!</code></a></span></h6>
+                                <p>The toolchain modules to add.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                       <tr>
                         <td data-property-name=""><a class="property-name" id="ModuleSource-withUpdateBlueprint" href="#ModuleSource-withUpdateBlueprint"><code>withUpdateBlueprint</code></a> - <span class="property-type"><a href="#definition-ModuleSource"><code>ModuleSource!</code></a></span> </td>
                         <td> Update the blueprint module to the latest version. </td>
@@ -12092,6 +12172,23 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>dependencies</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]!</code></a></span></h6>
                                 <p>The dependencies to update.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr class="row-has-field-arguments">
+                        <td data-property-name=""><a class="property-name" id="ModuleSource-withUpdateToolchains" href="#ModuleSource-withUpdateToolchains"><code>withUpdateToolchains</code></a> - <span class="property-type"><a href="#definition-ModuleSource"><code>ModuleSource!</code></a></span> </td>
+                        <td> Update one or more toolchains. </td>
+                      </tr>
+                      <tr class="row-field-arguments">
+                        <td colspan="2">
+                          <div class="field-arguments">
+                            <h5 class="field-arguments-heading"> Arguments </h5>
+                            <div class="field-argument-list">
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>toolchains</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]!</code></a></span></h6>
+                                <p>The toolchains to update.</p>
                               </div>
                             </div>
                           </div>
@@ -12164,6 +12261,23 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>features</code></span> - <span class="property-type"><a href="#definition-ModuleSourceExperimentalFeature"><code>[ModuleSourceExperimentalFeature!]!</code></a></span></h6>
                                 <p>The experimental features to disable.</p>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr class="row-has-field-arguments">
+                        <td data-property-name=""><a class="property-name" id="ModuleSource-withoutToolchains" href="#ModuleSource-withoutToolchains"><code>withoutToolchains</code></a> - <span class="property-type"><a href="#definition-ModuleSource"><code>ModuleSource!</code></a></span> </td>
+                        <td> Remove the provided toolchains from the module source. </td>
+                      </tr>
+                      <tr class="row-field-arguments">
+                        <td colspan="2">
+                          <div class="field-arguments">
+                            <h5 class="field-arguments-heading"> Arguments </h5>
+                            <div class="field-argument-list">
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>toolchains</code></span> - <span class="property-type"><a href="#definition-String"><code>[String!]!</code></a></span></h6>
+                                <p>The toolchains to remove.</p>
                               </div>
                             </div>
                           </div>
@@ -12377,6 +12491,10 @@
                       <tr>
                         <td data-property-name=""><a class="property-name" id="ObjectTypeDef-constructor" href="#ObjectTypeDef-constructor"><code>constructor</code></a> - <span class="property-type"><a href="#definition-Function"><code>Function</code></a></span> </td>
                         <td> The function used to construct new instances of this object, if any </td>
+                      </tr>
+                      <tr>
+                        <td data-property-name=""><a class="property-name" id="ObjectTypeDef-deprecated" href="#ObjectTypeDef-deprecated"><code>deprecated</code></a> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span> </td>
+                        <td> The reason this enum member is deprecated, if any. </td>
                       </tr>
                       <tr>
                         <td data-property-name=""><a class="property-name" id="ObjectTypeDef-description" href="#ObjectTypeDef-description"><code>description</code></a> - <span class="property-type"><a href="#definition-String"><code>String!</code></a></span> </td>
@@ -12676,6 +12794,10 @@
                       </tr>
                     </thead>
                     <tbody>
+                      <tr>
+                        <td data-property-name=""><a class="property-name" id="SDKConfig-debug" href="#SDKConfig-debug"><code>debug</code></a> - <span class="property-type"><a href="#definition-Boolean"><code>Boolean!</code></a></span> </td>
+                        <td> Whether to start the SDK runtime in debug mode with an interactive terminal. </td>
+                      </tr>
                       <tr>
                         <td data-property-name=""><a class="property-name" id="SDKConfig-id" href="#SDKConfig-id"><code>id</code></a> - <span class="property-type"><a href="#definition-SDKConfigID"><code>SDKConfigID!</code></a></span> </td>
                         <td> A unique identifier for this SDKConfig. </td>
@@ -13396,6 +13518,10 @@
                                 <h6 class="field-argument-name"><span class="property-name"><code>sourceMap</code></span> - <span class="property-type"><a href="#definition-SourceMapID"><code>SourceMapID</code></a></span></h6>
                                 <p>The source map for the enum member definition.</p>
                               </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>deprecated</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
+                                <p>If deprecated, the reason or migration path.</p>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -13421,6 +13547,10 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>sourceMap</code></span> - <span class="property-type"><a href="#definition-SourceMapID"><code>SourceMapID</code></a></span></h6>
                                 <p>The source map for the enum value definition.</p>
+                              </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>deprecated</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
+                                <p>If deprecated, the reason or migration path.</p>
                               </div>
                             </div>
                           </div>
@@ -13450,6 +13580,10 @@
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>sourceMap</code></span> - <span class="property-type"><a href="#definition-SourceMapID"><code>SourceMapID</code></a></span></h6>
                                 <p>The source map for the field definition.</p>
+                              </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>deprecated</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
+                                <p>If deprecated, the reason or migration path.</p>
                               </div>
                             </div>
                           </div>
@@ -13545,6 +13679,9 @@
                               </div>
                               <div class="field-argument">
                                 <h6 class="field-argument-name"><span class="property-name"><code>sourceMap</code></span> - <span class="property-type"><a href="#definition-SourceMapID"><code>SourceMapID</code></a></span></h6>
+                              </div>
+                              <div class="field-argument">
+                                <h6 class="field-argument-name"><span class="property-name"><code>deprecated</code></span> - <span class="property-type"><a href="#definition-String"><code>String</code></a></span></h6>
                               </div>
                             </div>
                           </div>

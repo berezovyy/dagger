@@ -1832,6 +1832,8 @@ pub struct AddressDirectoryOpts<'a> {
     #[builder(setter(into, strip_option), default)]
     pub exclude: Option<Vec<&'a str>>,
     #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
+    #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
     #[builder(setter(into, strip_option), default)]
     pub no_cache: Option<bool>,
@@ -1840,6 +1842,8 @@ pub struct AddressDirectoryOpts<'a> {
 pub struct AddressFileOpts<'a> {
     #[builder(setter(into, strip_option), default)]
     pub exclude: Option<Vec<&'a str>>,
+    #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
     #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
     #[builder(setter(into, strip_option), default)]
@@ -1881,6 +1885,9 @@ impl Address {
         if let Some(include) = opts.include {
             query = query.arg("include", include);
         }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
+        }
         if let Some(no_cache) = opts.no_cache {
             query = query.arg("noCache", no_cache);
         }
@@ -1915,6 +1922,9 @@ impl Address {
         }
         if let Some(include) = opts.include {
             query = query.arg("include", include);
+        }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
         }
         if let Some(no_cache) = opts.no_cache {
             query = query.arg("noCache", no_cache);
@@ -2492,6 +2502,9 @@ pub struct ContainerWithDirectoryOpts<'a> {
     /// Replace "${VAR}" or "$VAR" in the value of path according to the current environment variables defined in the container (e.g. "/$VAR/foo").
     #[builder(setter(into, strip_option), default)]
     pub expand: Option<bool>,
+    /// Apply .gitignore rules when writing the directory.
+    #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
     /// Patterns to include in the written directory (e.g. ["*.go", "go.mod", "go.sum"]).
     #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
@@ -3481,6 +3494,9 @@ impl Container {
         }
         if let Some(include) = opts.include {
             query = query.arg("include", include);
+        }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
         }
         if let Some(owner) = opts.owner {
             query = query.arg("owner", owner);
@@ -4829,6 +4845,9 @@ pub struct CurrentModuleWorkdirOpts<'a> {
     /// Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     #[builder(setter(into, strip_option), default)]
     pub exclude: Option<Vec<&'a str>>,
+    /// Apply .gitignore filter rules inside the directory
+    #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
     /// Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
@@ -4886,6 +4905,9 @@ impl CurrentModule {
         }
         if let Some(include) = opts.include {
             query = query.arg("include", include);
+        }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
         }
         Directory {
             proc: self.proc.clone(),
@@ -4977,6 +4999,9 @@ pub struct DirectoryFilterOpts<'a> {
     /// If set, paths matching one of these glob patterns is excluded from the new snapshot. Example: ["node_modules/", ".git*", ".env"]
     #[builder(setter(into, strip_option), default)]
     pub exclude: Option<Vec<&'a str>>,
+    /// If set, apply .gitignore rules when filtering the directory.
+    #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
     /// If set, only paths matching one of these glob patterns is included in the new snapshot. Example: (e.g., ["app/", "package.*"]).
     #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
@@ -5034,6 +5059,9 @@ pub struct DirectoryWithDirectoryOpts<'a> {
     /// Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     #[builder(setter(into, strip_option), default)]
     pub exclude: Option<Vec<&'a str>>,
+    /// Apply .gitignore filter rules inside the directory
+    #[builder(setter(into, strip_option), default)]
+    pub gitignore: Option<bool>,
     /// Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     #[builder(setter(into, strip_option), default)]
     pub include: Option<Vec<&'a str>>,
@@ -5389,6 +5417,9 @@ impl Directory {
         if let Some(include) = opts.include {
             query = query.arg("include", include);
         }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
+        }
         Directory {
             proc: self.proc.clone(),
             selection: query,
@@ -5617,6 +5648,9 @@ impl Directory {
         }
         if let Some(include) = opts.include {
             query = query.arg("include", include);
+        }
+        if let Some(gitignore) = opts.gitignore {
+            query = query.arg("gitignore", gitignore);
         }
         if let Some(owner) = opts.owner {
             query = query.arg("owner", owner);
@@ -6192,6 +6226,11 @@ pub struct EnumValueTypeDef {
     pub graphql_client: DynGraphQLClient,
 }
 impl EnumValueTypeDef {
+    /// The reason this enum member is deprecated, if any.
+    pub async fn deprecated(&self) -> Result<String, DaggerError> {
+        let query = self.selection.select("deprecated");
+        query.execute(self.graphql_client.clone()).await
+    }
     /// A doc string for the enum member, if any.
     pub async fn description(&self) -> Result<String, DaggerError> {
         let query = self.selection.select("description");
@@ -7594,6 +7633,11 @@ pub struct FieldTypeDef {
     pub graphql_client: DynGraphQLClient,
 }
 impl FieldTypeDef {
+    /// The reason this enum member is deprecated, if any.
+    pub async fn deprecated(&self) -> Result<String, DaggerError> {
+        let query = self.selection.select("deprecated");
+        query.execute(self.graphql_client.clone()).await
+    }
     /// A doc string for the field, if any.
     pub async fn description(&self) -> Result<String, DaggerError> {
         let query = self.selection.select("description");
@@ -8007,6 +8051,9 @@ pub struct FunctionWithArgOpts<'a> {
     /// A default value to use for this argument if not explicitly set by the caller, if any
     #[builder(setter(into, strip_option), default)]
     pub default_value: Option<Json>,
+    /// If deprecated, the reason or migration path.
+    #[builder(setter(into, strip_option), default)]
+    pub deprecated: Option<&'a str>,
     /// A doc string for the argument, if any
     #[builder(setter(into, strip_option), default)]
     pub description: Option<&'a str>,
@@ -8023,6 +8070,12 @@ pub struct FunctionWithCachePolicyOpts<'a> {
     #[builder(setter(into, strip_option), default)]
     pub time_to_live: Option<&'a str>,
 }
+#[derive(Builder, Debug, PartialEq)]
+pub struct FunctionWithDeprecatedOpts<'a> {
+    /// Reason or migration path describing the deprecation.
+    #[builder(setter(into, strip_option), default)]
+    pub reason: Option<&'a str>,
+}
 impl Function {
     /// Arguments accepted by the function, if any.
     pub fn args(&self) -> Vec<FunctionArg> {
@@ -8032,6 +8085,11 @@ impl Function {
             selection: query,
             graphql_client: self.graphql_client.clone(),
         }]
+    }
+    /// The reason this function is deprecated, if any.
+    pub async fn deprecated(&self) -> Result<String, DaggerError> {
+        let query = self.selection.select("deprecated");
+        query.execute(self.graphql_client.clone()).await
     }
     /// A doc string for the function, if any.
     pub async fn description(&self) -> Result<String, DaggerError> {
@@ -8126,6 +8184,9 @@ impl Function {
         if let Some(source_map) = opts.source_map {
             query = query.arg("sourceMap", source_map);
         }
+        if let Some(deprecated) = opts.deprecated {
+            query = query.arg("deprecated", deprecated);
+        }
         Function {
             proc: self.proc.clone(),
             selection: query,
@@ -8162,6 +8223,35 @@ impl Function {
         query = query.arg("policy", policy);
         if let Some(time_to_live) = opts.time_to_live {
             query = query.arg("timeToLive", time_to_live);
+        }
+        Function {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }
+    }
+    /// Returns the function with the provided deprecation reason.
+    ///
+    /// # Arguments
+    ///
+    /// * `opt` - optional argument, see inner type for documentation, use <func>_opts to use
+    pub fn with_deprecated(&self) -> Function {
+        let query = self.selection.select("withDeprecated");
+        Function {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }
+    }
+    /// Returns the function with the provided deprecation reason.
+    ///
+    /// # Arguments
+    ///
+    /// * `opt` - optional argument, see inner type for documentation, use <func>_opts to use
+    pub fn with_deprecated_opts<'a>(&self, opts: FunctionWithDeprecatedOpts<'a>) -> Function {
+        let mut query = self.selection.select("withDeprecated");
+        if let Some(reason) = opts.reason {
+            query = query.arg("reason", reason);
         }
         Function {
             proc: self.proc.clone(),
@@ -8219,6 +8309,11 @@ impl FunctionArg {
     /// A default value to use for this argument when not explicitly set by the caller, if any.
     pub async fn default_value(&self) -> Result<Json, DaggerError> {
         let query = self.selection.select("defaultValue");
+        query.execute(self.graphql_client.clone()).await
+    }
+    /// The reason this function is deprecated, if any.
+    pub async fn deprecated(&self) -> Result<String, DaggerError> {
+        let query = self.selection.select("deprecated");
         query.execute(self.graphql_client.clone()).await
     }
     /// A doc string for the argument, if any.
@@ -9932,6 +10027,15 @@ impl ModuleSource {
         let query = self.selection.select("sync");
         query.execute(self.graphql_client.clone()).await
     }
+    /// The toolchains referenced by the module source.
+    pub fn toolchains(&self) -> Vec<ModuleSource> {
+        let query = self.selection.select("toolchains");
+        vec![ModuleSource {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }]
+    }
     /// User-defined defaults read from local .env files
     pub fn user_defaults(&self) -> EnvFile {
         let query = self.selection.select("userDefaults");
@@ -10093,6 +10197,20 @@ impl ModuleSource {
             graphql_client: self.graphql_client.clone(),
         }
     }
+    /// Add toolchains to the module source.
+    ///
+    /// # Arguments
+    ///
+    /// * `toolchains` - The toolchain modules to add.
+    pub fn with_toolchains(&self, toolchains: Vec<ModuleSourceId>) -> ModuleSource {
+        let mut query = self.selection.select("withToolchains");
+        query = query.arg("toolchains", toolchains);
+        ModuleSource {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }
+    }
     /// Update the blueprint module to the latest version.
     pub fn with_update_blueprint(&self) -> ModuleSource {
         let query = self.selection.select("withUpdateBlueprint");
@@ -10112,6 +10230,26 @@ impl ModuleSource {
         query = query.arg(
             "dependencies",
             dependencies
+                .into_iter()
+                .map(|i| i.into())
+                .collect::<Vec<String>>(),
+        );
+        ModuleSource {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }
+    }
+    /// Update one or more toolchains.
+    ///
+    /// # Arguments
+    ///
+    /// * `toolchains` - The toolchains to update.
+    pub fn with_update_toolchains(&self, toolchains: Vec<impl Into<String>>) -> ModuleSource {
+        let mut query = self.selection.select("withUpdateToolchains");
+        query = query.arg(
+            "toolchains",
+            toolchains
                 .into_iter()
                 .map(|i| i.into())
                 .collect::<Vec<String>>(),
@@ -10202,6 +10340,26 @@ impl ModuleSource {
             graphql_client: self.graphql_client.clone(),
         }
     }
+    /// Remove the provided toolchains from the module source.
+    ///
+    /// # Arguments
+    ///
+    /// * `toolchains` - The toolchains to remove.
+    pub fn without_toolchains(&self, toolchains: Vec<impl Into<String>>) -> ModuleSource {
+        let mut query = self.selection.select("withoutToolchains");
+        query = query.arg(
+            "toolchains",
+            toolchains
+                .into_iter()
+                .map(|i| i.into())
+                .collect::<Vec<String>>(),
+        );
+        ModuleSource {
+            proc: self.proc.clone(),
+            selection: query,
+            graphql_client: self.graphql_client.clone(),
+        }
+    }
 }
 #[derive(Clone)]
 pub struct ObjectTypeDef {
@@ -10218,6 +10376,11 @@ impl ObjectTypeDef {
             selection: query,
             graphql_client: self.graphql_client.clone(),
         }
+    }
+    /// The reason this enum member is deprecated, if any.
+    pub async fn deprecated(&self) -> Result<String, DaggerError> {
+        let query = self.selection.select("deprecated");
+        query.execute(self.graphql_client.clone()).await
     }
     /// The doc string for the object, if any.
     pub async fn description(&self) -> Result<String, DaggerError> {
@@ -11823,6 +11986,11 @@ pub struct SdkConfig {
     pub graphql_client: DynGraphQLClient,
 }
 impl SdkConfig {
+    /// Whether to start the SDK runtime in debug mode with an interactive terminal.
+    pub async fn debug(&self) -> Result<bool, DaggerError> {
+        let query = self.selection.select("debug");
+        query.execute(self.graphql_client.clone()).await
+    }
     /// A unique identifier for this SDKConfig.
     pub async fn id(&self) -> Result<SdkConfigId, DaggerError> {
         let query = self.selection.select("id");
@@ -12232,6 +12400,9 @@ pub struct TypeDefWithEnumOpts<'a> {
 }
 #[derive(Builder, Debug, PartialEq)]
 pub struct TypeDefWithEnumMemberOpts<'a> {
+    /// If deprecated, the reason or migration path.
+    #[builder(setter(into, strip_option), default)]
+    pub deprecated: Option<&'a str>,
     /// A doc string for the member, if any
     #[builder(setter(into, strip_option), default)]
     pub description: Option<&'a str>,
@@ -12244,6 +12415,9 @@ pub struct TypeDefWithEnumMemberOpts<'a> {
 }
 #[derive(Builder, Debug, PartialEq)]
 pub struct TypeDefWithEnumValueOpts<'a> {
+    /// If deprecated, the reason or migration path.
+    #[builder(setter(into, strip_option), default)]
+    pub deprecated: Option<&'a str>,
     /// A doc string for the value, if any
     #[builder(setter(into, strip_option), default)]
     pub description: Option<&'a str>,
@@ -12253,6 +12427,9 @@ pub struct TypeDefWithEnumValueOpts<'a> {
 }
 #[derive(Builder, Debug, PartialEq)]
 pub struct TypeDefWithFieldOpts<'a> {
+    /// If deprecated, the reason or migration path.
+    #[builder(setter(into, strip_option), default)]
+    pub deprecated: Option<&'a str>,
     /// A doc string for the field, if any
     #[builder(setter(into, strip_option), default)]
     pub description: Option<&'a str>,
@@ -12269,6 +12446,8 @@ pub struct TypeDefWithInterfaceOpts<'a> {
 }
 #[derive(Builder, Debug, PartialEq)]
 pub struct TypeDefWithObjectOpts<'a> {
+    #[builder(setter(into, strip_option), default)]
+    pub deprecated: Option<&'a str>,
     #[builder(setter(into, strip_option), default)]
     pub description: Option<&'a str>,
     #[builder(setter(into, strip_option), default)]
@@ -12444,6 +12623,9 @@ impl TypeDef {
         if let Some(source_map) = opts.source_map {
             query = query.arg("sourceMap", source_map);
         }
+        if let Some(deprecated) = opts.deprecated {
+            query = query.arg("deprecated", deprecated);
+        }
         TypeDef {
             proc: self.proc.clone(),
             selection: query,
@@ -12483,6 +12665,9 @@ impl TypeDef {
         }
         if let Some(source_map) = opts.source_map {
             query = query.arg("sourceMap", source_map);
+        }
+        if let Some(deprecated) = opts.deprecated {
+            query = query.arg("deprecated", deprecated);
         }
         TypeDef {
             proc: self.proc.clone(),
@@ -12540,6 +12725,9 @@ impl TypeDef {
         }
         if let Some(source_map) = opts.source_map {
             query = query.arg("sourceMap", source_map);
+        }
+        if let Some(deprecated) = opts.deprecated {
+            query = query.arg("deprecated", deprecated);
         }
         TypeDef {
             proc: self.proc.clone(),
@@ -12660,6 +12848,9 @@ impl TypeDef {
         }
         if let Some(source_map) = opts.source_map {
             query = query.arg("sourceMap", source_map);
+        }
+        if let Some(deprecated) = opts.deprecated {
+            query = query.arg("deprecated", deprecated);
         }
         TypeDef {
             proc: self.proc.clone(),

@@ -14,9 +14,11 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/vektah/gqlparser/v2/ast"
 
+	"github.com/dagger/dagger/core/modules"
 	"github.com/dagger/dagger/dagql"
 	"github.com/dagger/dagger/dagql/call"
 	"github.com/dagger/dagger/engine/buildkit"
+	"github.com/dagger/dagger/engine/cache"
 	"github.com/dagger/dagger/engine/slog"
 )
 
@@ -24,7 +26,7 @@ type Module struct {
 	// The source of the module
 	Source dagql.Nullable[dagql.ObjectResult[*ModuleSource]] `field:"true" name:"source" doc:"The source for the module."`
 
-	// The source to load contextual dirs/files from, which may be different than Source for blueprints
+	// The source to load contextual dirs/files from, which may be different than Source for blueprints or toolchains
 	ContextSource dagql.Nullable[dagql.ObjectResult[*ModuleSource]]
 
 	// The name of the module
@@ -56,6 +58,17 @@ type Module struct {
 
 	// The module's enumerations
 	EnumDefs []*TypeDef `field:"true" name:"enums" doc:"Enumerations served by this module."`
+
+	// IsToolchain indicates this module was loaded as a toolchain dependency.
+	// Toolchain modules are allowed to share types with the modules that depend on them.
+	IsToolchain bool
+
+	// ToolchainModules stores references to toolchain module instances by their field name
+	// This enables proxy field resolution to route calls to the toolchain's runtime
+	ToolchainModules map[string]*Module
+
+	// ToolchainArgumentConfigs stores argument configuration overrides for toolchains by their original name
+	ToolchainArgumentConfigs map[string][]*modules.ModuleConfigArgument
 
 	// ResultID is the ID of the initialized module.
 	ResultID *call.ID
@@ -90,8 +103,9 @@ func (mod *Module) GetSource() *ModuleSource {
 }
 
 // The "context source" is the module used as the execution context for the module.
-// Usually it's simply the module source itself. But when using blueprints, it will
-// point to the downstrea, module applying the blueprint, not the blueprint itself.
+// Usually it's simply the module source itself. But when using blueprints or
+// toolchains, it will point to the downstream module applying the toolchain,
+// not the toolchain itself.
 func (mod *Module) GetContextSource() *ModuleSource {
 	if !mod.ContextSource.Valid {
 		return nil
@@ -99,19 +113,32 @@ func (mod *Module) GetContextSource() *ModuleSource {
 	return mod.ContextSource.Value.Self()
 }
 
+func (mod *Module) ContentDigestCacheKey() cache.CacheKey[dagql.CacheKeyType] {
+	return cache.CacheKey[dagql.CacheKeyType]{
+		CallKey: string(hashutil.HashStrings(
+			mod.ContextSource.Value.Self().Digest,
+			"asModule",
+		)),
+	}
+}
+
 // Return all user defaults for this module
 func (mod *Module) UserDefaults(ctx context.Context) (*EnvFile, error) {
 	defaults := NewEnvFile(true)
-	src := mod.GetContextSource()
-	if src == nil {
-		return defaults, nil
+
+	// Use ContextSource for loading .env files (it has the actual context directory)
+	// but use Source for the module name prefix lookups
+	contextSrc := mod.GetContextSource()
+	if contextSrc != nil && contextSrc.UserDefaults != nil {
+		defaults = defaults.WithEnvFiles(contextSrc.UserDefaults)
 	}
-	// Add local defaults from the module source
-	defaults = defaults.WithEnvFiles(src.UserDefaults)
-	// If the module source has a blueprint, also add local defaults from that
-	if bp := src.Blueprint.Self(); bp != nil {
-		defaults = defaults.WithEnvFiles(bp.UserDefaults)
+
+	src := mod.GetSource()
+	if src != nil && src != contextSrc && src.UserDefaults != nil {
+		// Also merge in toolchain source defaults if different from context
+		defaults = defaults.WithEnvFiles(src.UserDefaults)
 	}
+
 	return defaults, nil
 }
 
@@ -440,6 +467,7 @@ func (mod *Module) validateTypeDef(ctx context.Context, typeDef *TypeDef) error 
 	return nil
 }
 
+//nolint:gocyclo
 func (mod *Module) validateObjectTypeDef(ctx context.Context, typeDef *TypeDef) error {
 	// check whether this is a pre-existing object from core or another module
 	modType, ok, err := mod.Deps.ModTypeFor(ctx, typeDef)
@@ -466,13 +494,16 @@ func (mod *Module) validateObjectTypeDef(ctx context.Context, typeDef *TypeDef) 
 		if ok {
 			sourceMod := fieldType.SourceMod()
 			// fields can reference core types and local types, but not types from
-			// other modules
+			// other modules (unless the source module is a toolchain)
 			if sourceMod != nil && sourceMod.Name() != ModuleName && sourceMod != mod {
-				return fmt.Errorf("object %q field %q cannot reference external type from dependency module %q",
-					obj.OriginalName,
-					field.OriginalName,
-					sourceMod.Name(),
-				)
+				// Allow types from toolchain modules
+				if tcMod, ok := sourceMod.(*Module); !ok || !tcMod.IsToolchain {
+					return fmt.Errorf("object %q field %q cannot reference external type from dependency module %q",
+						obj.OriginalName,
+						field.OriginalName,
+						sourceMod.Name(),
+					)
+				}
 			}
 		}
 		if err := mod.validateTypeDef(ctx, field.TypeDef); err != nil {
@@ -484,19 +515,21 @@ func (mod *Module) validateObjectTypeDef(ctx context.Context, typeDef *TypeDef) 
 		if gqlFieldName(fn.Name) == "id" {
 			return fmt.Errorf("cannot define function with reserved name %q on object %q", fn.Name, obj.Name)
 		}
-		// Check if this is a type from another (non-core) module, which is currently not allowed
+		// Check if this is a type from another (non-core) module
 		retType, ok, err := mod.Deps.ModTypeFor(ctx, fn.ReturnType)
 		if err != nil {
 			return fmt.Errorf("failed to get mod type for type def: %w", err)
 		}
 		if ok {
 			if sourceMod := retType.SourceMod(); sourceMod != nil && sourceMod.Name() != ModuleName && sourceMod != mod {
-				// already validated, skip
-				return fmt.Errorf("object %q function %q cannot return external type from dependency module %q",
-					obj.OriginalName,
-					fn.OriginalName,
-					sourceMod.Name(),
-				)
+				// Allow types from toolchain modules
+				if tcMod, ok := sourceMod.(*Module); !ok || !tcMod.IsToolchain {
+					return fmt.Errorf("object %q function %q cannot return external type from dependency module %q",
+						obj.OriginalName,
+						fn.OriginalName,
+						sourceMod.Name(),
+					)
+				}
 			}
 		}
 		if err := mod.validateTypeDef(ctx, fn.ReturnType); err != nil {
@@ -510,13 +543,15 @@ func (mod *Module) validateObjectTypeDef(ctx context.Context, typeDef *TypeDef) 
 			}
 			if ok {
 				if sourceMod := argType.SourceMod(); sourceMod != nil && sourceMod.Name() != ModuleName && sourceMod != mod {
-					// already validated, skip
-					return fmt.Errorf("object %q function %q arg %q cannot reference external type from dependency module %q",
-						obj.OriginalName,
-						fn.OriginalName,
-						arg.OriginalName,
-						sourceMod.Name(),
-					)
+					// Allow types from toolchain modules
+					if tcMod, ok := sourceMod.(*Module); !ok || !tcMod.IsToolchain {
+						return fmt.Errorf("object %q function %q arg %q cannot reference external type from dependency module %q",
+							obj.OriginalName,
+							fn.OriginalName,
+							arg.OriginalName,
+							sourceMod.Name(),
+						)
+					}
 				}
 			}
 			if err := mod.validateTypeDef(ctx, arg.TypeDef); err != nil {

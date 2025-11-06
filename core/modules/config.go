@@ -59,6 +59,9 @@ type ModuleConfig struct {
 	// An optional blueprint module
 	Blueprint *ModuleConfigDependency `json:"blueprint,omitempty"`
 
+	// Toolchain modules
+	Toolchains []*ModuleConfigDependency `json:"toolchains,omitempty"`
+
 	// Paths to explicitly include from the module, relative to the configuration file.
 	Include []string `json:"include,omitempty"`
 
@@ -94,6 +97,7 @@ type ModuleConfigUserFields struct {
 type SDK struct {
 	Source string         `json:"source"`
 	Config map[string]any `json:"config,omitempty"`
+	Debug  bool           `json:"debug,omitempty"`
 	// The experimental features enabled for this module.
 	Experimental map[string]bool `json:"experimental,omitempty"`
 }
@@ -199,6 +203,27 @@ type ModuleConfigDependency struct {
 
 	// The pinned version of the module dependency.
 	Pin string `json:"pin,omitempty"`
+
+	// Arguments configuration for toolchains that override function argument pragmas.
+	Arguments []*ModuleConfigArgument `json:"arguments,omitempty"`
+}
+
+// ModuleConfigArgument represents an argument override for a toolchain function
+type ModuleConfigArgument struct {
+	// The function chain to apply this argument to. Empty or nil for constructor.
+	Function []string `json:"function,omitempty"`
+
+	// The name of the argument to override.
+	Name string `json:"name"`
+
+	// The default value to use for this argument.
+	Default string `json:"default,omitempty"`
+
+	// The default path to use for File or Directory arguments.
+	DefaultPath string `json:"defaultPath,omitempty"`
+
+	// Ignore patterns for Directory arguments.
+	Ignore []string `json:"ignore,omitempty"`
 }
 
 func (depCfg *ModuleConfigDependency) UnmarshalJSON(data []byte) error {

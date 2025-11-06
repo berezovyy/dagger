@@ -127,6 +127,7 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 				dagql.Arg("path").Doc(`Location of the directory to access (e.g., ".").`),
 				dagql.Arg("exclude").Doc(`Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).`),
 				dagql.Arg("include").Doc(`Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).`),
+				dagql.Arg("gitignore").Doc(`Apply .gitignore filter rules inside the directory`),
 			),
 
 		dagql.NodeFuncWithCacheKey("workdirFile", s.currentModuleWorkdirFile, dagql.CachePerClient).
@@ -141,6 +142,12 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 			Doc(`Returns the function with the given doc string.`).
 			Args(
 				dagql.Arg("description").Doc(`The doc string to set.`),
+			),
+
+		dagql.Func("withDeprecated", s.functionWithDeprecated).
+			Doc(`Returns the function with the provided deprecation reason.`).
+			Args(
+				dagql.Arg("reason").Doc(`Reason or migration path describing the deprecation.`),
 			),
 
 		dagql.Func("withSourceMap", s.functionWithSourceMap).
@@ -159,6 +166,7 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 				dagql.Arg("defaultPath").Doc(`If the argument is a Directory or File type, default to load path from context directory, relative to root directory.`),
 				dagql.Arg("ignore").Doc(`Patterns to ignore when loading the contextual argument value.`),
 				dagql.Arg("sourceMap").Doc(`The source map for the argument definition.`),
+				dagql.Arg("deprecated").Doc(`If deprecated, the reason or migration path.`),
 			),
 
 		dagql.Func("withCachePolicy", s.functionWithCachePolicy).
@@ -204,6 +212,7 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 				dagql.Arg("typeDef").Doc(`The type of the field`),
 				dagql.Arg("description").Doc(`A doc string for the field, if any`),
 				dagql.Arg("sourceMap").Doc(`The source map for the field definition.`),
+				dagql.Arg("deprecated").Doc(`If deprecated, the reason or migration path.`),
 			),
 
 		dagql.Func("withFunction", s.typeDefWithFunction).
@@ -229,6 +238,7 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 				dagql.Arg("value").Doc(`The name of the value in the enum`),
 				dagql.Arg("description").Doc(`A doc string for the value, if any`),
 				dagql.Arg("sourceMap").Doc(`The source map for the enum value definition.`),
+				dagql.Arg("deprecated").Doc(`If deprecated, the reason or migration path.`),
 			),
 
 		dagql.Func("withEnumMember", s.typeDefWithEnumMember).
@@ -239,6 +249,7 @@ func (s *moduleSchema) Install(dag *dagql.Server) {
 				dagql.Arg("value").Doc(`The value of the member in the enum`),
 				dagql.Arg("description").Doc(`A doc string for the member, if any`),
 				dagql.Arg("sourceMap").Doc(`The source map for the enum member definition.`),
+				dagql.Arg("deprecated").Doc(`If deprecated, the reason or migration path.`),
 			),
 	}.Install(dag)
 
@@ -301,6 +312,7 @@ func (s *moduleSchema) typeDefWithObject(ctx context.Context, def *core.TypeDef,
 	Name        string
 	Description string `default:""`
 	SourceMap   dagql.Optional[core.SourceMapID]
+	Deprecated  *string
 }) (*core.TypeDef, error) {
 	if args.Name == "" {
 		return nil, fmt.Errorf("object type def must have a name")
@@ -309,7 +321,7 @@ func (s *moduleSchema) typeDefWithObject(ctx context.Context, def *core.TypeDef,
 	if err != nil {
 		return nil, err
 	}
-	return def.WithObject(args.Name, args.Description, sourceMap), nil
+	return def.WithObject(args.Name, args.Description, args.Deprecated, sourceMap), nil
 }
 
 func (s *moduleSchema) typeDefWithInterface(ctx context.Context, def *core.TypeDef, args struct {
@@ -332,6 +344,7 @@ func (s *moduleSchema) typeDefWithObjectField(ctx context.Context, def *core.Typ
 	TypeDef     core.TypeDefID
 	Description string `default:""`
 	SourceMap   dagql.Optional[core.SourceMapID]
+	Deprecated  *string
 }) (*core.TypeDef, error) {
 	dag, err := core.CurrentDagqlServer(ctx)
 	if err != nil {
@@ -346,7 +359,7 @@ func (s *moduleSchema) typeDefWithObjectField(ctx context.Context, def *core.Typ
 	if err != nil {
 		return nil, err
 	}
-	return def.WithObjectField(args.Name, fieldType.Self(), args.Description, sourceMap)
+	return def.WithObjectField(args.Name, fieldType.Self(), args.Description, sourceMap, args.Deprecated)
 }
 
 func (s *moduleSchema) typeDefWithFunction(ctx context.Context, def *core.TypeDef, args struct {
@@ -403,12 +416,13 @@ func (s *moduleSchema) typeDefWithEnumValue(ctx context.Context, def *core.TypeD
 	Value       string
 	Description string `default:""`
 	SourceMap   dagql.Optional[core.SourceMapID]
+	Deprecated  *string
 }) (*core.TypeDef, error) {
 	sourceMap, err := s.loadSourceMap(ctx, args.SourceMap)
 	if err != nil {
 		return nil, err
 	}
-	return def.WithEnumValue(args.Value, args.Value, args.Description, sourceMap)
+	return def.WithEnumValue(args.Value, args.Value, args.Description, args.Deprecated, sourceMap)
 }
 
 func (s *moduleSchema) typeDefWithEnumMember(ctx context.Context, def *core.TypeDef, args struct {
@@ -416,6 +430,7 @@ func (s *moduleSchema) typeDefWithEnumMember(ctx context.Context, def *core.Type
 	Value       string `default:""`
 	Description string `default:""`
 	SourceMap   dagql.Optional[core.SourceMapID]
+	Deprecated  *string
 }) (*core.TypeDef, error) {
 	sourceMap, err := s.loadSourceMap(ctx, args.SourceMap)
 	if err != nil {
@@ -423,9 +438,9 @@ func (s *moduleSchema) typeDefWithEnumMember(ctx context.Context, def *core.Type
 	}
 
 	if !supportEnumMembers(ctx) {
-		return def.WithEnumValue(args.Name, args.Value, args.Description, sourceMap)
+		return def.WithEnumValue(args.Name, args.Value, args.Description, args.Deprecated, sourceMap)
 	}
-	return def.WithEnumMember(args.Name, args.Value, args.Description, sourceMap)
+	return def.WithEnumMember(args.Name, args.Value, args.Description, args.Deprecated, sourceMap)
 }
 
 func supportEnumMembers(ctx context.Context) bool {
@@ -485,6 +500,12 @@ func (s *moduleSchema) functionWithDescription(ctx context.Context, fn *core.Fun
 	return fn.WithDescription(args.Description), nil
 }
 
+func (s *moduleSchema) functionWithDeprecated(ctx context.Context, fn *core.Function, args struct {
+	Reason *string
+}) (*core.Function, error) {
+	return fn.WithDeprecated(args.Reason), nil
+}
+
 func (s *moduleSchema) functionWithArg(ctx context.Context, fn *core.Function, args struct {
 	Name         string
 	TypeDef      core.TypeDefID
@@ -493,6 +514,7 @@ func (s *moduleSchema) functionWithArg(ctx context.Context, fn *core.Function, a
 	DefaultPath  string    `default:""`
 	Ignore       []string  `default:"[]"`
 	SourceMap    dagql.Optional[core.SourceMapID]
+	Deprecated   *string
 }) (*core.Function, error) {
 	dag, err := core.CurrentDagqlServer(ctx)
 	if err != nil {
@@ -553,7 +575,7 @@ func (s *moduleSchema) functionWithArg(ctx context.Context, fn *core.Function, a
 		td = td.WithOptional(true)
 	}
 
-	return fn.WithArg(args.Name, td, args.Description, args.DefaultValue, args.DefaultPath, args.Ignore, sourceMap), nil
+	return fn.WithArg(args.Name, td, args.Description, args.DefaultValue, args.DefaultPath, args.Ignore, sourceMap, args.Deprecated), nil
 }
 
 func (s *moduleSchema) functionWithSourceMap(ctx context.Context, fn *core.Function, args struct {
@@ -873,6 +895,7 @@ func (s *moduleSchema) currentModuleWorkdir(
 				{Name: "path", Value: dagql.String(args.Path)},
 				{Name: "exclude", Value: asArrayInput(args.Exclude, dagql.NewString)},
 				{Name: "include", Value: asArrayInput(args.Include, dagql.NewString)},
+				{Name: "gitignore", Value: dagql.Boolean(args.Gitignore)},
 			},
 		},
 	)

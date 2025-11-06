@@ -389,6 +389,15 @@ func (DirectorySuite) TestDirectoryFilterIncludeExclude(ctx context.Context, t *
 		require.NoError(t, err)
 		require.Equal(t, []string{"d.txt", "e.txt"}, entries)
 	})
+
+	t.Run("gitignore works", func(ctx context.Context, t *testctx.T) {
+		dir := dir.WithNewFile(".gitignore", "b.txt\nsubdir/\n")
+		entries, err := dir.Filter(dagger.DirectoryFilterOpts{
+			Gitignore: true,
+		}).Entries(ctx)
+		require.NoError(t, err)
+		require.Equal(t, []string{".gitignore", "a.txt", "c.txt.rar"}, entries)
+	})
 }
 
 func (DirectorySuite) TestWithDirectoryIncludeExclude(ctx context.Context, t *testctx.T) {
@@ -452,6 +461,15 @@ func (DirectorySuite) TestWithDirectoryIncludeExclude(ctx context.Context, t *te
 		}).Entries(ctx)
 		require.NoError(t, err)
 		require.Equal(t, []string{"d.txt", "e.txt"}, entries)
+	})
+
+	t.Run("gitignore works", func(ctx context.Context, t *testctx.T) {
+		dir := dir.WithNewFile(".gitignore", "b.txt\nsubdir/\n")
+		entries, err := dir.Filter(dagger.DirectoryFilterOpts{
+			Gitignore: true,
+		}).Entries(ctx)
+		require.NoError(t, err)
+		require.Equal(t, []string{".gitignore", "a.txt", "c.txt.rar"}, entries)
 	})
 }
 
@@ -858,6 +876,16 @@ func (DirectorySuite) TestDiff(ctx context.Context, t *testctx.T) {
 		ents, err := d.Directory("sub").Diff(d.Directory("submarine")).Entries(ctx)
 		require.NoError(t, err)
 		require.Equal(t, ents, []string{"file2"})
+	})
+
+	t.Run("lower scratch", func(ctx context.Context, t *testctx.T) {
+		c := connect(ctx, t)
+		upper := c.Directory().WithNewFile("file", "content")
+		lower := c.Directory()
+
+		ents, err := lower.Diff(upper).Entries(ctx)
+		require.NoError(t, err)
+		require.Equal(t, ents, []string{"file"})
 	})
 
 	/*
@@ -2541,6 +2569,18 @@ func (DirectorySuite) TestExists(ctx context.Context, t *testctx.T) {
 			require.Equal(t, tc.Expected, exists)
 		})
 	}
+}
+
+func (DirectorySuite) TestExistsUsingAbsoluteSymlink(ctx context.Context, t *testctx.T) {
+	c := connect(ctx, t)
+	ok, err := c.Directory().
+		WithNewFile("/some-file", "some-content").
+		WithSymlink("/some-file", "/symlink-to-some-file").
+		Exists(ctx, "symlink-to-some-file", dagger.DirectoryExistsOpts{
+			ExpectedType: dagger.ExistsTypeRegularType,
+		})
+	require.NoError(t, err)
+	require.True(t, ok)
 }
 
 func (DirectorySuite) TestDirCaching(ctx context.Context, t *testctx.T) {

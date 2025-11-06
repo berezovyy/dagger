@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/url"
@@ -50,6 +51,36 @@ func (proto ModuleSourceKind) Type() *ast.Type {
 	}
 }
 
+// ModuleRelationType distinguishes between dependencies and toolchains in error messages and field access
+type ModuleRelationType int
+
+const (
+	ModuleRelationTypeDependency ModuleRelationType = iota
+	ModuleRelationTypeToolchain
+)
+
+func (t ModuleRelationType) String() string {
+	switch t {
+	case ModuleRelationTypeDependency:
+		return "dependency"
+	case ModuleRelationTypeToolchain:
+		return "toolchain"
+	default:
+		return "unknown"
+	}
+}
+
+func (t ModuleRelationType) Plural() string {
+	switch t {
+	case ModuleRelationTypeDependency:
+		return "dependencies"
+	case ModuleRelationTypeToolchain:
+		return "toolchains"
+	default:
+		return "unknowns"
+	}
+}
+
 func (proto ModuleSourceKind) TypeDescription() string {
 	return "The kind of module source."
 }
@@ -77,6 +108,7 @@ func (proto ModuleSourceKind) HumanString() string {
 
 type SDKConfig struct {
 	Source       string `field:"true" name:"source" doc:"Source of the SDK. Either a name of a builtin SDK or a module source ref string pointing to the SDK's implementation."`
+	Debug        bool   `field:"true" name:"debug" doc:"Whether to start the SDK runtime in debug mode with an interactive terminal."`
 	Config       map[string]any
 	Experimental map[string]bool
 }
@@ -128,10 +160,17 @@ type ModuleSource struct {
 	ConfigDependencies []*modules.ModuleConfigDependency
 
 	// Dependencies are the loaded sources for the module's dependencies
-	Dependencies    dagql.ObjectResultArray[*ModuleSource] `field:"true" name:"dependencies" doc:"The dependencies of the module source."`
+	Dependencies dagql.ObjectResultArray[*ModuleSource] `field:"true" name:"dependencies" doc:"The dependencies of the module source."`
+
+	// Blueprint (from `dagger init --blueprint`)
 	ConfigBlueprint *modules.ModuleConfigDependency
 	Blueprint       dagql.ObjectResult[*ModuleSource] `field:"true" name:"blueprint" doc:"The blueprint referenced by the module source."`
-	UserDefaults    *EnvFile                          `field:"true" name:"userDefaults" doc:"User-defined defaults read from local .env files"`
+
+	// Toolchains (from `dagger toolchain install`)
+	ConfigToolchains []*modules.ModuleConfigDependency
+	Toolchains       dagql.ObjectResultArray[*ModuleSource] `field:"true" name:"toolchains" doc:"The toolchains referenced by the module source."`
+
+	UserDefaults *EnvFile `field:"true" name:"userDefaults" doc:"User-defined defaults read from local .env files"`
 	// Clients are the clients generated for the module.
 	ConfigClients []*modules.ModuleConfigClient `field:"true" name:"configClients" doc:"The clients generated for the module."`
 
@@ -184,6 +223,13 @@ func (src ModuleSource) Clone() *ModuleSource {
 	origDependencies := src.Dependencies
 	src.Dependencies = make([]dagql.ObjectResult[*ModuleSource], len(origDependencies))
 	copy(src.Dependencies, origDependencies)
+
+	origConfigToolchains := src.ConfigToolchains
+	src.ConfigToolchains = make([]*modules.ModuleConfigDependency, len(origConfigToolchains))
+	copy(src.ConfigToolchains, origConfigToolchains)
+	origToolchains := src.Toolchains
+	src.Toolchains = make([]dagql.ObjectResult[*ModuleSource], len(origToolchains))
+	copy(src.Toolchains, origToolchains)
 
 	if src.Local != nil {
 		src.Local = src.Local.Clone()
@@ -259,6 +305,23 @@ func (src *ModuleSource) Pin() string {
 		return src.Git.Commit
 	default:
 		return ""
+	}
+}
+
+// GetRelatedModules returns the related modules (dependencies or toolchains) based on the type
+func (src *ModuleSource) GetRelatedModules(typ ModuleRelationType) []dagql.ObjectResult[*ModuleSource] {
+	if typ == ModuleRelationTypeDependency {
+		return src.Dependencies
+	}
+	return src.Toolchains
+}
+
+// SetRelatedModules sets the related modules (dependencies or toolchains) based on the type
+func (src *ModuleSource) SetRelatedModules(typ ModuleRelationType, modules []dagql.ObjectResult[*ModuleSource]) {
+	if typ == ModuleRelationTypeDependency {
+		src.Dependencies = modules
+	} else {
+		src.Toolchains = modules
 	}
 }
 
@@ -429,6 +492,10 @@ func (src *ModuleSource) CalcDigest(ctx context.Context) digest.Digest {
 		src.ContextDirectory.ID().Digest().String(),
 	}
 
+	if src.SDK != nil && src.SDK.Debug {
+		inputs = append(inputs, rand.Text())
+	}
+
 	// Include user defaults in digest so changes to env files invalidate cache
 	if src.UserDefaults != nil {
 		vars, err := src.UserDefaults.Variables(ctx, false)
@@ -463,6 +530,19 @@ func (src *ModuleSource) CalcDigest(ctx context.Context) digest.Digest {
 		inputs = append(inputs, dep.Self().Digest)
 	}
 
+	// Include blueprint in digest so changes to blueprint invalidate cache
+	if src.Blueprint.Self() != nil {
+		inputs = append(inputs, "blueprint:"+src.Blueprint.Self().Digest)
+	}
+
+	// Include toolchains in digest so changes to toolchains invalidate cache
+	for _, toolchain := range src.Toolchains {
+		if toolchain.Self() == nil {
+			continue
+		}
+		inputs = append(inputs, "toolchain:"+toolchain.Self().Digest)
+	}
+
 	for _, client := range src.ConfigClients {
 		inputs = append(inputs, client.Generator, client.Directory)
 	}
@@ -476,20 +556,25 @@ func (src *ModuleSource) LoadContextDir(
 	ctx context.Context,
 	dag *dagql.Server,
 	path string,
-	include []string,
-	exclude []string,
+	filter CopyFilter,
 ) (inst dagql.ObjectResult[*Directory], err error) {
 	filterInputs := []dagql.NamedInput{}
-	if len(include) > 0 {
+	if len(filter.Include) > 0 {
 		filterInputs = append(filterInputs, dagql.NamedInput{
 			Name:  "include",
-			Value: dagql.ArrayInput[dagql.String](dagql.NewStringArray(include...)),
+			Value: dagql.ArrayInput[dagql.String](dagql.NewStringArray(filter.Include...)),
 		})
 	}
-	if len(exclude) > 0 {
+	if len(filter.Exclude) > 0 {
 		filterInputs = append(filterInputs, dagql.NamedInput{
 			Name:  "exclude",
-			Value: dagql.ArrayInput[dagql.String](dagql.NewStringArray(exclude...)),
+			Value: dagql.ArrayInput[dagql.String](dagql.NewStringArray(filter.Exclude...)),
+		})
+	}
+	if filter.Gitignore {
+		filterInputs = append(filterInputs, dagql.NamedInput{
+			Name:  "gitignore",
+			Value: dagql.NewBoolean(true),
 		})
 	}
 
@@ -860,7 +945,9 @@ func (src *ModuleSource) LoadContextGit(
 	}
 
 	// bit harder, this is actually a local directory
-	dir, err := src.LoadContextDir(ctx, dag, "/", []string{".git"}, nil)
+	dir, err := src.LoadContextDir(ctx, dag, "/", CopyFilter{
+		Gitignore: true,
+	})
 	if err != nil {
 		return inst, fmt.Errorf("failed to load contextual git: %w", err)
 	}

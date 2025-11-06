@@ -17,6 +17,7 @@ module.exports = {
         "introduction/features/secrets",
         "introduction/features/llm",
         "introduction/features/shell",
+        "introduction/features/toolchains",
       ],
     },
     "introduction/faq",
@@ -118,6 +119,7 @@ module.exports = {
         "extending/modules/custom-types",
         "extending/modules/interfaces",
         "extending/modules/state",
+        "extending/modules/function-caching",
         "extending/modules/playground",
         {
           type: "link",

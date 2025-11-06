@@ -7,8 +7,8 @@ import (
 	"io"
 	"net"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/content/local"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/plugins/content/local"
 	"github.com/dagger/dagger/internal/buildkit/identity"
 	bksession "github.com/dagger/dagger/internal/buildkit/session"
 	sessioncontent "github.com/dagger/dagger/internal/buildkit/session/content"
@@ -16,6 +16,7 @@ import (
 	"github.com/dagger/dagger/internal/buildkit/util/bklog"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/dagger/dagger/engine"
 	"github.com/dagger/dagger/engine/buildkit"
 	"github.com/dagger/dagger/engine/client"
 	"github.com/dagger/dagger/engine/distconsts"
@@ -26,6 +27,13 @@ func (srv *Server) newBuildkitSession(ctx context.Context, c *daggerClient) (*bk
 	if err != nil {
 		return nil, err
 	}
+
+	// for nested clients running the dagger cli, the session attachable connection
+	// may not have all of the client metadata (i.e. AllowedLLMModules), so we
+	// point to c.clientMetadata here which may be updated with that info by
+	// later connections. This matters because dag-ops obtain the client metadata
+	// through this particular context.
+	ctx = engine.ContextWithClientMetadata(ctx, c.clientMetadata)
 
 	builtinStore, err := local.NewStore(distconsts.EngineContainerBuiltinContentDir)
 	if err != nil {

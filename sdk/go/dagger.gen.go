@@ -353,6 +353,8 @@ type AddressDirectoryOpts struct {
 
 	Include []string
 
+	Gitignore bool
+
 	NoCache bool
 }
 
@@ -367,6 +369,10 @@ func (r *Address) Directory(opts ...AddressDirectoryOpts) *Directory {
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 		// `noCache` optional argument
 		if !querybuilder.IsZeroValue(opts[i].NoCache) {
@@ -385,6 +391,8 @@ type AddressFileOpts struct {
 
 	Include []string
 
+	Gitignore bool
+
 	NoCache bool
 }
 
@@ -399,6 +407,10 @@ func (r *Address) File(opts ...AddressFileOpts) *File {
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 		// `noCache` optional argument
 		if !querybuilder.IsZeroValue(opts[i].NoCache) {
@@ -1995,6 +2007,8 @@ type ContainerWithDirectoryOpts struct {
 	Exclude []string
 	// Patterns to include in the written directory (e.g. ["*.go", "go.mod", "go.sum"]).
 	Include []string
+	// Apply .gitignore rules when writing the directory.
+	Gitignore bool
 	// A user:group to set for the directory and its contents.
 	//
 	// The user and group can either be an ID (1000:1000) or a name (foo:bar).
@@ -2017,6 +2031,10 @@ func (r *Container) WithDirectory(path string, source *Directory, opts ...Contai
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 		// `owner` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Owner) {
@@ -3009,6 +3027,8 @@ type CurrentModuleWorkdirOpts struct {
 	Exclude []string
 	// Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
 	Include []string
+	// Apply .gitignore filter rules inside the directory
+	Gitignore bool
 }
 
 // Load a directory from the module's scratch working directory, including any changes that may have been made to it during module function execution.
@@ -3022,6 +3042,10 @@ func (r *CurrentModule) Workdir(path string, opts ...CurrentModuleWorkdirOpts) *
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 	}
 	q = q.Arg("path", path)
@@ -3338,6 +3362,8 @@ type DirectoryFilterOpts struct {
 	Exclude []string
 	// If set, only paths matching one of these glob patterns is included in the new snapshot. Example: (e.g., ["app/", "package.*"]).
 	Include []string
+	// If set, apply .gitignore rules when filtering the directory.
+	Gitignore bool
 }
 
 // Return a snapshot with some paths included or excluded
@@ -3351,6 +3377,10 @@ func (r *Directory) Filter(opts ...DirectoryFilterOpts) *Directory {
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 	}
 
@@ -3609,6 +3639,8 @@ type DirectoryWithDirectoryOpts struct {
 	Exclude []string
 	// Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
 	Include []string
+	// Apply .gitignore filter rules inside the directory
+	Gitignore bool
 	// A user:group to set for the copied directory and its contents.
 	//
 	// The user and group must be an ID (1000:1000), not a name (foo:bar).
@@ -3629,6 +3661,10 @@ func (r *Directory) WithDirectory(path string, source *Directory, opts ...Direct
 		// `include` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Include) {
 			q = q.Arg("include", opts[i].Include)
+		}
+		// `gitignore` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Gitignore) {
+			q = q.Arg("gitignore", opts[i].Gitignore)
 		}
 		// `owner` optional argument
 		if !querybuilder.IsZeroValue(opts[i].Owner) {
@@ -4484,6 +4520,7 @@ func (r *EnumTypeDef) Values(ctx context.Context) ([]EnumValueTypeDef, error) {
 type EnumValueTypeDef struct {
 	query *querybuilder.Selection
 
+	deprecated  *string
 	description *string
 	id          *EnumValueTypeDefID
 	name        *string
@@ -4494,6 +4531,19 @@ func (r *EnumValueTypeDef) WithGraphQLQuery(q *querybuilder.Selection) *EnumValu
 	return &EnumValueTypeDef{
 		query: q,
 	}
+}
+
+// The reason this enum member is deprecated, if any.
+func (r *EnumValueTypeDef) Deprecated(ctx context.Context) (string, error) {
+	if r.deprecated != nil {
+		return *r.deprecated, nil
+	}
+	q := r.query.Select("deprecated")
+
+	var response string
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 // A doc string for the enum member, if any.
@@ -5758,6 +5808,7 @@ func (r *ErrorValue) Value(ctx context.Context) (JSON, error) {
 type FieldTypeDef struct {
 	query *querybuilder.Selection
 
+	deprecated  *string
 	description *string
 	id          *FieldTypeDefID
 	name        *string
@@ -5767,6 +5818,19 @@ func (r *FieldTypeDef) WithGraphQLQuery(q *querybuilder.Selection) *FieldTypeDef
 	return &FieldTypeDef{
 		query: q,
 	}
+}
+
+// The reason this enum member is deprecated, if any.
+func (r *FieldTypeDef) Deprecated(ctx context.Context) (string, error) {
+	if r.deprecated != nil {
+		return *r.deprecated, nil
+	}
+	q := r.query.Select("deprecated")
+
+	var response string
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 // A doc string for the field, if any.
@@ -5883,6 +5947,7 @@ func (r *File) WithGraphQLQuery(q *querybuilder.Selection) *File {
 // FileAsEnvFileOpts contains options for File.AsEnvFile
 type FileAsEnvFileOpts struct {
 	// Replace "${VAR}" or "$VAR" with the value of other vars
+	// Deprecated: Variable expansion is now enabled by default
 	Expand bool
 }
 
@@ -6237,6 +6302,7 @@ func (r *File) WithTimestamps(timestamp int) *File {
 type Function struct {
 	query *querybuilder.Selection
 
+	deprecated  *string
 	description *string
 	id          *FunctionID
 	name        *string
@@ -6287,6 +6353,19 @@ func (r *Function) Args(ctx context.Context) ([]FunctionArg, error) {
 	}
 
 	return convert(response), nil
+}
+
+// The reason this function is deprecated, if any.
+func (r *Function) Deprecated(ctx context.Context) (string, error) {
+	if r.deprecated != nil {
+		return *r.deprecated, nil
+	}
+	q := r.query.Select("deprecated")
+
+	var response string
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 // A doc string for the function, if any.
@@ -6385,6 +6464,8 @@ type FunctionWithArgOpts struct {
 	Ignore []string
 	// The source map for the argument definition.
 	SourceMap *SourceMap
+	// If deprecated, the reason or migration path.
+	Deprecated string
 }
 
 // Returns the function with the provided argument
@@ -6412,6 +6493,10 @@ func (r *Function) WithArg(name string, typeDef *TypeDef, opts ...FunctionWithAr
 		if !querybuilder.IsZeroValue(opts[i].SourceMap) {
 			q = q.Arg("sourceMap", opts[i].SourceMap)
 		}
+		// `deprecated` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Deprecated) {
+			q = q.Arg("deprecated", opts[i].Deprecated)
+		}
 	}
 	q = q.Arg("name", name)
 	q = q.Arg("typeDef", typeDef)
@@ -6437,6 +6522,27 @@ func (r *Function) WithCachePolicy(policy FunctionCachePolicy, opts ...FunctionW
 		}
 	}
 	q = q.Arg("policy", policy)
+
+	return &Function{
+		query: q,
+	}
+}
+
+// FunctionWithDeprecatedOpts contains options for Function.WithDeprecated
+type FunctionWithDeprecatedOpts struct {
+	// Reason or migration path describing the deprecation.
+	Reason string
+}
+
+// Returns the function with the provided deprecation reason.
+func (r *Function) WithDeprecated(opts ...FunctionWithDeprecatedOpts) *Function {
+	q := r.query.Select("withDeprecated")
+	for i := len(opts) - 1; i >= 0; i-- {
+		// `reason` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Reason) {
+			q = q.Arg("reason", opts[i].Reason)
+		}
+	}
 
 	return &Function{
 		query: q,
@@ -6472,6 +6578,7 @@ type FunctionArg struct {
 
 	defaultPath  *string
 	defaultValue *JSON
+	deprecated   *string
 	description  *string
 	id           *FunctionArgID
 	name         *string
@@ -6504,6 +6611,19 @@ func (r *FunctionArg) DefaultValue(ctx context.Context) (JSON, error) {
 	q := r.query.Select("defaultValue")
 
 	var response JSON
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
+}
+
+// The reason this function is deprecated, if any.
+func (r *FunctionArg) Deprecated(ctx context.Context) (string, error) {
+	if r.deprecated != nil {
+		return *r.deprecated, nil
+	}
+	q := r.query.Select("deprecated")
+
+	var response string
 
 	q = q.Bind(&response)
 	return response, q.Execute(ctx)
@@ -9429,6 +9549,39 @@ func (r *ModuleSource) Sync(ctx context.Context) (*ModuleSource, error) {
 	}, nil
 }
 
+// The toolchains referenced by the module source.
+func (r *ModuleSource) Toolchains(ctx context.Context) ([]ModuleSource, error) {
+	q := r.query.Select("toolchains")
+
+	q = q.Select("id")
+
+	type toolchains struct {
+		Id ModuleSourceID
+	}
+
+	convert := func(fields []toolchains) []ModuleSource {
+		out := []ModuleSource{}
+
+		for i := range fields {
+			val := ModuleSource{id: &fields[i].Id}
+			val.query = q.Root().Select("loadModuleSourceFromID").Arg("id", fields[i].Id)
+			out = append(out, val)
+		}
+
+		return out
+	}
+	var response []toolchains
+
+	q = q.Bind(&response)
+
+	err := q.Execute(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return convert(response), nil
+}
+
 // User-defined defaults read from local .env files
 func (r *ModuleSource) UserDefaults() *EnvFile {
 	q := r.query.Select("userDefaults")
@@ -9543,6 +9696,16 @@ func (r *ModuleSource) WithSourceSubpath(path string) *ModuleSource {
 	}
 }
 
+// Add toolchains to the module source.
+func (r *ModuleSource) WithToolchains(toolchains []*ModuleSource) *ModuleSource {
+	q := r.query.Select("withToolchains")
+	q = q.Arg("toolchains", toolchains)
+
+	return &ModuleSource{
+		query: q,
+	}
+}
+
 // Update the blueprint module to the latest version.
 func (r *ModuleSource) WithUpdateBlueprint() *ModuleSource {
 	q := r.query.Select("withUpdateBlueprint")
@@ -9556,6 +9719,16 @@ func (r *ModuleSource) WithUpdateBlueprint() *ModuleSource {
 func (r *ModuleSource) WithUpdateDependencies(dependencies []string) *ModuleSource {
 	q := r.query.Select("withUpdateDependencies")
 	q = q.Arg("dependencies", dependencies)
+
+	return &ModuleSource{
+		query: q,
+	}
+}
+
+// Update one or more toolchains.
+func (r *ModuleSource) WithUpdateToolchains(toolchains []string) *ModuleSource {
+	q := r.query.Select("withUpdateToolchains")
+	q = q.Arg("toolchains", toolchains)
 
 	return &ModuleSource{
 		query: q,
@@ -9611,10 +9784,21 @@ func (r *ModuleSource) WithoutExperimentalFeatures(features []ModuleSourceExperi
 	}
 }
 
+// Remove the provided toolchains from the module source.
+func (r *ModuleSource) WithoutToolchains(toolchains []string) *ModuleSource {
+	q := r.query.Select("withoutToolchains")
+	q = q.Arg("toolchains", toolchains)
+
+	return &ModuleSource{
+		query: q,
+	}
+}
+
 // A definition of a custom object defined in a Module.
 type ObjectTypeDef struct {
 	query *querybuilder.Selection
 
+	deprecated       *string
 	description      *string
 	id               *ObjectTypeDefID
 	name             *string
@@ -9634,6 +9818,19 @@ func (r *ObjectTypeDef) Constructor() *Function {
 	return &Function{
 		query: q,
 	}
+}
+
+// The reason this enum member is deprecated, if any.
+func (r *ObjectTypeDef) Deprecated(ctx context.Context) (string, error) {
+	if r.deprecated != nil {
+		return *r.deprecated, nil
+	}
+	q := r.query.Select("deprecated")
+
+	var response string
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 // The doc string for the object, if any.
@@ -10086,6 +10283,7 @@ func (r *Client) Env(opts ...EnvOpts) *Env {
 // EnvFileOpts contains options for Client.EnvFile
 type EnvFileOpts struct {
 	// Replace "${VAR}" or "$VAR" with the value of other vars
+	// Deprecated: Variable expansion is now enabled by default
 	Expand bool
 }
 
@@ -10167,6 +10365,7 @@ type GitOpts struct {
 	// DEPRECATED: Set to true to keep .git directory.
 	//
 	// Default: true
+	// Deprecated: Set to true to keep .git directory.
 	KeepGitDir bool
 	// Set SSH known hosts
 	SSHKnownHosts string
@@ -10942,6 +11141,7 @@ func (r *Client) Version(ctx context.Context) (string, error) {
 type SDKConfig struct {
 	query *querybuilder.Selection
 
+	debug  *bool
 	id     *SDKConfigID
 	source *string
 }
@@ -10950,6 +11150,19 @@ func (r *SDKConfig) WithGraphQLQuery(q *querybuilder.Selection) *SDKConfig {
 	return &SDKConfig{
 		query: q,
 	}
+}
+
+// Whether to start the SDK runtime in debug mode with an interactive terminal.
+func (r *SDKConfig) Debug(ctx context.Context) (bool, error) {
+	if r.debug != nil {
+		return *r.debug, nil
+	}
+	q := r.query.Select("debug")
+
+	var response bool
+
+	q = q.Bind(&response)
+	return response, q.Execute(ctx)
 }
 
 // A unique identifier for this SDKConfig.
@@ -12127,6 +12340,8 @@ type TypeDefWithEnumMemberOpts struct {
 	Description string
 	// The source map for the enum member definition.
 	SourceMap *SourceMap
+	// If deprecated, the reason or migration path.
+	Deprecated string
 }
 
 // Adds a static value for an Enum TypeDef, failing if the type is not an enum.
@@ -12145,6 +12360,10 @@ func (r *TypeDef) WithEnumMember(name string, opts ...TypeDefWithEnumMemberOpts)
 		if !querybuilder.IsZeroValue(opts[i].SourceMap) {
 			q = q.Arg("sourceMap", opts[i].SourceMap)
 		}
+		// `deprecated` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Deprecated) {
+			q = q.Arg("deprecated", opts[i].Deprecated)
+		}
 	}
 	q = q.Arg("name", name)
 
@@ -12159,6 +12378,8 @@ type TypeDefWithEnumValueOpts struct {
 	Description string
 	// The source map for the enum value definition.
 	SourceMap *SourceMap
+	// If deprecated, the reason or migration path.
+	Deprecated string
 }
 
 // Adds a static value for an Enum TypeDef, failing if the type is not an enum.
@@ -12175,6 +12396,10 @@ func (r *TypeDef) WithEnumValue(value string, opts ...TypeDefWithEnumValueOpts) 
 		if !querybuilder.IsZeroValue(opts[i].SourceMap) {
 			q = q.Arg("sourceMap", opts[i].SourceMap)
 		}
+		// `deprecated` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Deprecated) {
+			q = q.Arg("deprecated", opts[i].Deprecated)
+		}
 	}
 	q = q.Arg("value", value)
 
@@ -12189,6 +12414,8 @@ type TypeDefWithFieldOpts struct {
 	Description string
 	// The source map for the field definition.
 	SourceMap *SourceMap
+	// If deprecated, the reason or migration path.
+	Deprecated string
 }
 
 // Adds a static field for an Object TypeDef, failing if the type is not an object.
@@ -12203,6 +12430,10 @@ func (r *TypeDef) WithField(name string, typeDef *TypeDef, opts ...TypeDefWithFi
 		// `sourceMap` optional argument
 		if !querybuilder.IsZeroValue(opts[i].SourceMap) {
 			q = q.Arg("sourceMap", opts[i].SourceMap)
+		}
+		// `deprecated` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Deprecated) {
+			q = q.Arg("deprecated", opts[i].Deprecated)
 		}
 	}
 	q = q.Arg("name", name)
@@ -12277,6 +12508,8 @@ type TypeDefWithObjectOpts struct {
 	Description string
 
 	SourceMap *SourceMap
+
+	Deprecated string
 }
 
 // Returns a TypeDef of kind Object with the provided name.
@@ -12292,6 +12525,10 @@ func (r *TypeDef) WithObject(name string, opts ...TypeDefWithObjectOpts) *TypeDe
 		// `sourceMap` optional argument
 		if !querybuilder.IsZeroValue(opts[i].SourceMap) {
 			q = q.Arg("sourceMap", opts[i].SourceMap)
+		}
+		// `deprecated` optional argument
+		if !querybuilder.IsZeroValue(opts[i].Deprecated) {
+			q = q.Arg("deprecated", opts[i].Deprecated)
 		}
 	}
 	q = q.Arg("name", name)

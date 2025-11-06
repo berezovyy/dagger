@@ -28,10 +28,10 @@ type Address {
   container: Container!
 
   """Load a directory from the address."""
-  directory(exclude: [String!] = [], include: [String!] = [], noCache: Boolean = false): Directory!
+  directory(exclude: [String!] = [], include: [String!] = [], gitignore: Boolean = false, noCache: Boolean = false): Directory!
 
   """Load a file from the address."""
-  file(exclude: [String!] = [], include: [String!] = [], noCache: Boolean = false): File!
+  file(exclude: [String!] = [], include: [String!] = [], gitignore: Boolean = false, noCache: Boolean = false): File!
 
   """Load a git ref (branch, tag or commit) from the address."""
   gitRef: GitRef!
@@ -751,6 +751,9 @@ type Container {
     """
     include: [String!] = []
 
+    """Apply .gitignore rules when writing the directory."""
+    gitignore: Boolean = false
+
     """
     A user:group to set for the directory and its contents.
 
@@ -1430,6 +1433,9 @@ type CurrentModule {
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
     include: [String!] = []
+
+    """Apply .gitignore filter rules inside the directory"""
+    gitignore: Boolean = false
   ): Directory!
 
   """
@@ -1613,6 +1619,9 @@ type Directory {
     new snapshot. Example: (e.g., ["app/", "package.*"]).
     """
     include: [String!] = []
+
+    """If set, apply .gitignore rules when filtering the directory."""
+    gitignore: Boolean = false
   ): Directory!
 
   """
@@ -1731,6 +1740,9 @@ type Directory {
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
     include: [String!] = []
+
+    """Apply .gitignore filter rules inside the directory"""
+    gitignore: Boolean = false
 
     """
     A user:group to set for the copied directory and its contents.
@@ -2013,6 +2025,9 @@ scalar EnumTypeDefID
 
 """A definition of a value in a custom enum defined in a Module."""
 type EnumValueTypeDef {
+  """The reason this enum member is deprecated, if any."""
+  deprecated: String
+
   """A doc string for the enum member, if any."""
   description: String!
 
@@ -2678,6 +2693,9 @@ A field on an object has a static value, as opposed to a function on an object
 whose value is computed by invoking code (and can accept arguments).
 """
 type FieldTypeDef {
+  """The reason this enum member is deprecated, if any."""
+  deprecated: String
+
   """A doc string for the field, if any."""
   description: String!
 
@@ -2860,6 +2878,9 @@ type Function {
   """Arguments accepted by the function, if any."""
   args: [FunctionArg!]!
 
+  """The reason this function is deprecated, if any."""
+  deprecated: String
+
   """A doc string for the function, if any."""
   description: String!
 
@@ -2901,6 +2922,9 @@ type Function {
 
     """The source map for the argument definition."""
     sourceMap: SourceMapID
+
+    """If deprecated, the reason or migration path."""
+    deprecated: String
   ): Function!
 
   """Returns the function updated to use the provided cache policy."""
@@ -2912,6 +2936,12 @@ type Function {
     The TTL for the cache policy, if applicable. Provided as a duration string, e.g. "5m", "1h30s".
     """
     timeToLive: String
+  ): Function!
+
+  """Returns the function with the provided deprecation reason."""
+  withDeprecated(
+    """Reason or migration path describing the deprecation."""
+    reason: String
   ): Function!
 
   """Returns the function with the given doc string."""
@@ -2943,6 +2973,9 @@ type FunctionArg {
   A default value to use for this argument when not explicitly set by the caller, if any.
   """
   defaultValue: JSON!
+
+  """The reason this function is deprecated, if any."""
+  deprecated: String
 
   """A doc string for the argument, if any."""
   description: String!
@@ -3825,6 +3858,9 @@ type ModuleSource {
   """
   sync: ModuleSourceID!
 
+  """The toolchains referenced by the module source."""
+  toolchains: [ModuleSource!]!
+
   """User-defined defaults read from local .env files"""
   userDefaults: EnvFile!
 
@@ -3895,6 +3931,12 @@ type ModuleSource {
     path: String!
   ): ModuleSource!
 
+  """Add toolchains to the module source."""
+  withToolchains(
+    """The toolchain modules to add."""
+    toolchains: [ModuleSourceID!]!
+  ): ModuleSource!
+
   """Update the blueprint module to the latest version."""
   withUpdateBlueprint: ModuleSource!
 
@@ -3902,6 +3944,12 @@ type ModuleSource {
   withUpdateDependencies(
     """The dependencies to update."""
     dependencies: [String!]!
+  ): ModuleSource!
+
+  """Update one or more toolchains."""
+  withUpdateToolchains(
+    """The toolchains to update."""
+    toolchains: [String!]!
   ): ModuleSource!
 
   """Update one or more clients."""
@@ -3931,6 +3979,12 @@ type ModuleSource {
   withoutExperimentalFeatures(
     """The experimental features to disable."""
     features: [ModuleSourceExperimentalFeature!]!
+  ): ModuleSource!
+
+  """Remove the provided toolchains from the module source."""
+  withoutToolchains(
+    """The toolchains to remove."""
+    toolchains: [String!]!
   ): ModuleSource!
 }
 
@@ -3965,6 +4019,9 @@ enum NetworkProtocol {
 type ObjectTypeDef {
   """The function used to construct new instances of this object, if any"""
   constructor: Function
+
+  """The reason this enum member is deprecated, if any."""
+  deprecated: String
 
   """The doc string for the object, if any."""
   description: String!
@@ -4486,6 +4543,11 @@ enum ReturnType {
 
 """The SDK config of the module."""
 type SDKConfig {
+  """
+  Whether to start the SDK runtime in debug mode with an interactive terminal.
+  """
+  debug: Boolean!
+
   """A unique identifier for this SDKConfig."""
   id: SDKConfigID!
 
@@ -4799,6 +4861,9 @@ type TypeDef {
 
     """The source map for the enum member definition."""
     sourceMap: SourceMapID
+
+    """If deprecated, the reason or migration path."""
+    deprecated: String
   ): TypeDef!
 
   """
@@ -4813,6 +4878,9 @@ type TypeDef {
 
     """The source map for the enum value definition."""
     sourceMap: SourceMapID
+
+    """If deprecated, the reason or migration path."""
+    deprecated: String
   ): TypeDef! @deprecated(reason: "Use `withEnumMember` instead")
 
   """
@@ -4830,6 +4898,9 @@ type TypeDef {
 
     """The source map for the field definition."""
     sourceMap: SourceMapID
+
+    """If deprecated, the reason or migration path."""
+    deprecated: String
   ): TypeDef!
 
   """
@@ -4855,7 +4926,7 @@ type TypeDef {
   only to refer to an object. This is how functions are able to return their own
   object, or any other circular reference.
   """
-  withObject(name: String!, description: String = "", sourceMap: SourceMapID): TypeDef!
+  withObject(name: String!, description: String = "", sourceMap: SourceMapID, deprecated: String): TypeDef!
 
   """Sets whether this type can be set to null."""
   withOptional(optional: Boolean!): TypeDef!

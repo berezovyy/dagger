@@ -16,9 +16,9 @@ import (
 	"sync"
 
 	"dagger.io/dagger/telemetry"
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/pkg/transfer/archive"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/transfer/archive"
 	"github.com/containerd/platforms"
 	"github.com/dagger/dagger/internal/buildkit/client/llb"
 	"github.com/dagger/dagger/internal/buildkit/client/llb/sourceresolver"
@@ -812,6 +812,9 @@ func (container *Container) WithDirectory(
 	}
 	if len(filter.Include) > 0 {
 		args = append(args, dagql.NamedInput{Name: "include", Value: asArrayInput(filter.Include, dagql.NewString)})
+	}
+	if filter.Gitignore {
+		args = append(args, dagql.NamedInput{Name: "gitignore", Value: dagql.Boolean(true)})
 	}
 	if owner != "" {
 		// directories only handle int uid/gid, so make sure we resolve names if needed

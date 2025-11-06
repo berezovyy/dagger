@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/leases"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/leases"
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
 	bkcache "github.com/dagger/dagger/internal/buildkit/cache"
@@ -416,6 +416,7 @@ func (s *containerSchema) Install(srv *dagql.Server) {
 				dagql.Arg("source").Doc(`Identifier of the directory to write`).View(AfterVersion("v0.19.0")),
 				dagql.Arg("exclude").Doc(`Patterns to exclude in the written directory (e.g. ["node_modules/**", ".gitignore", ".git/"]).`),
 				dagql.Arg("include").Doc(`Patterns to include in the written directory (e.g. ["*.go", "go.mod", "go.sum"]).`),
+				dagql.Arg("gitignore").Doc(`Apply .gitignore rules when writing the directory.`),
 				dagql.Arg("owner").Doc(`A user:group to set for the directory and its contents.`,
 					`The user and group can either be an ID (1000:1000) or a name (foo:bar).`,
 					`If the group is omitted, it defaults to the same as the user.`),

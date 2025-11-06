@@ -140,6 +140,7 @@ func (s *directorySchema) Install(srv *dagql.Server) {
 				dagql.Arg("source").Doc(`Identifier of the directory to copy.`).View(AfterVersion("v0.19.0")),
 				dagql.Arg("exclude").Doc(`Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).`),
 				dagql.Arg("include").Doc(`Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).`),
+				dagql.Arg("gitignore").Doc(`Apply .gitignore filter rules inside the directory`),
 				dagql.Arg("owner").Doc(`A user:group to set for the copied directory and its contents.`,
 					`The user and group must be an ID (1000:1000), not a name (foo:bar).`,
 					`If the group is omitted, it defaults to the same as the user.`),
@@ -149,6 +150,7 @@ func (s *directorySchema) Install(srv *dagql.Server) {
 			Args(
 				dagql.Arg("exclude").Doc(`If set, paths matching one of these glob patterns is excluded from the new snapshot. Example: ["node_modules/", ".git*", ".env"]`),
 				dagql.Arg("include").Doc(`If set, only paths matching one of these glob patterns is included in the new snapshot. Example: (e.g., ["app/", "package.*"]).`),
+				dagql.Arg("gitignore").Doc(`If set, apply .gitignore rules when filtering the directory.`),
 			),
 		dagql.NodeFunc("withNewDirectory", DagOpDirectoryWrapper(srv, s.withNewDirectory, WithPathFn(keepParentDir[withNewDirectoryArgs]))).
 			Doc(`Retrieves this directory plus a new directory created at the given path.`).
@@ -688,9 +690,13 @@ func (s *directorySchema) withoutDirectory(ctx context.Context, parent dagql.Obj
 		return inst, err
 	}
 
-	dir, err := parent.Self().Without(ctx, srv, args.Path)
+	dir, anyPathsRemoved, err := parent.Self().Without(ctx, srv, args.Path)
 	if err != nil {
 		return inst, err
+	}
+	if !anyPathsRemoved {
+		// no changes, return parent to avoid unnecessary DAG node
+		return parent, nil
 	}
 	return dagql.NewObjectResultForCurrentID(ctx, srv, dir)
 }
@@ -707,9 +713,13 @@ func (s *directorySchema) withoutFile(ctx context.Context, parent dagql.ObjectRe
 		return inst, err
 	}
 
-	dir, err := parent.Self().Without(ctx, srv, args.Path)
+	dir, anyPathsRemoved, err := parent.Self().Without(ctx, srv, args.Path)
 	if err != nil {
 		return inst, err
+	}
+	if !anyPathsRemoved {
+		// no changes, return parent to avoid unnecessary DAG node
+		return parent, nil
 	}
 	return dagql.NewObjectResultForCurrentID(ctx, srv, dir)
 }
@@ -726,9 +736,13 @@ func (s *directorySchema) withoutFiles(ctx context.Context, parent dagql.ObjectR
 		return inst, err
 	}
 
-	dir, err := parent.Self().Without(ctx, srv, args.Paths...)
+	dir, anyPathsRemoved, err := parent.Self().Without(ctx, srv, args.Paths...)
 	if err != nil {
 		return inst, err
+	}
+	if !anyPathsRemoved {
+		// no changes, return parent to avoid unnecessary DAG node
+		return parent, nil
 	}
 	return dagql.NewObjectResultForCurrentID(ctx, srv, dir)
 }

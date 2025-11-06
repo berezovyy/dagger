@@ -8,15 +8,15 @@ import (
 	"net"
 	"sync"
 
-	"github.com/containerd/containerd"
 	contentapi "github.com/containerd/containerd/api/services/content/v1"
 	imagesapi "github.com/containerd/containerd/api/services/images/v1"
 	leasesapi "github.com/containerd/containerd/api/services/leases/v1"
-	"github.com/containerd/containerd/content"
-	contentproxy "github.com/containerd/containerd/content/proxy"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/leases"
-	leasesproxy "github.com/containerd/containerd/leases/proxy"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/content"
+	contentproxy "github.com/containerd/containerd/v2/core/content/proxy"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/leases"
+	leasesproxy "github.com/containerd/containerd/v2/core/leases/proxy"
 	bkcache "github.com/dagger/dagger/internal/buildkit/cache"
 	bkcacheconfig "github.com/dagger/dagger/internal/buildkit/cache/config"
 	"github.com/dagger/dagger/internal/buildkit/cache/remotecache"
@@ -481,7 +481,16 @@ func (c *Client) ListenHostToContainer(
 				conn, err = c.Dialer.Dial(proto, upstream)
 				if err != nil {
 					bklog.G(ctx).Warnf("failed to dial %s %s: %s", proto, upstream, err)
-					return
+					sendL.Lock()
+					err = listener.Send(&h2c.ListenRequest{
+						ConnId: connID,
+						Close:  true,
+					})
+					sendL.Unlock()
+					if err != nil {
+						return
+					}
+					continue
 				}
 
 				connsL.Lock()
@@ -496,7 +505,7 @@ func (c *Client) ListenHostToContainer(
 					for {
 						n, err := conn.Read(data)
 						if err != nil {
-							return
+							break
 						}
 
 						sendL.Lock()
@@ -506,9 +515,16 @@ func (c *Client) ListenHostToContainer(
 						})
 						sendL.Unlock()
 						if err != nil {
-							return
+							break
 						}
 					}
+
+					sendL.Lock()
+					_ = listener.Send(&h2c.ListenRequest{
+						ConnId: connID,
+						Close:  true,
+					})
+					sendL.Unlock()
 				}()
 			}
 

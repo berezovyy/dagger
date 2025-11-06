@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/content/local"
-	"github.com/containerd/containerd/leases"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/leases"
+	"github.com/containerd/containerd/v2/plugins/content/local"
 	"github.com/dagger/dagger/internal/buildkit/client/llb"
 	bkgw "github.com/dagger/dagger/internal/buildkit/frontend/gateway/client"
 	"github.com/dagger/dagger/internal/buildkit/util/contentutil"
@@ -320,9 +320,10 @@ func (s *hostSchema) directory(ctx context.Context, host dagql.ObjectResult[*cor
 	}
 
 	dir, err := host.Self().Directory(ctx, absRootCopyPath, core.CopyFilter{
-		Include: includePatterns,
-		Exclude: excludePatterns,
-	}, args.Gitignore, args.NoCache, relPathFromRoot)
+		Include:   includePatterns,
+		Exclude:   excludePatterns,
+		Gitignore: args.Gitignore,
+	}, args.NoCache, relPathFromRoot)
 
 	if err != nil {
 		return inst, fmt.Errorf("failed to get directory: %w", err)
